@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { BUCKET, supabase } from "../lib/supabase";
 import { useCategories } from "../lib/useCategories";
 import { money } from "../lib/format";
+import { SOURCE_LABEL } from "../lib/merchant";
+import { TAX_LINES, USE_LABEL } from "../lib/tax";
 import type { LineItem, Receipt } from "../lib/types";
 
 type Draft = Omit<LineItem, "id" | "receipt_id"> & { id?: string };
@@ -88,6 +90,10 @@ export default function ReceiptDetail() {
         total: it.total,
         category_id: it.category_id,
         woo_sku: it.woo_sku || null,
+        pack_size: Math.max(1, Math.round(it.pack_size || 1)),
+        tax_line: it.tax_line || null,
+        use_type: it.use_type || null,
+        tax_confidence: it.tax_confidence,
       }));
       const existing = rows.filter((r) => "id" in r);
       const fresh = rows.filter((r) => !("id" in r));
@@ -122,7 +128,7 @@ export default function ReceiptDetail() {
 
   return (
     <div className="detail">
-      <p><Link to="/">← All receipts</Link></p>
+      <p><Link to="/receipts">← All receipts</Link></p>
 
       {receipt.status === "needs_review" && (
         <div className="banner warn">
@@ -165,7 +171,8 @@ export default function ReceiptDetail() {
             <label className="full">Notes<textarea rows={2} value={receipt.notes ?? ""} onChange={(e) => set("notes", e.target.value || null)} /></label>
           </div>
           <p className="muted small">
-            Source: {receipt.source}
+            Source: {SOURCE_LABEL[receipt.source] ?? receipt.source}
+            {receipt.source_url && <> · <a href={receipt.source_url} target="_blank" rel="noreferrer">store page</a></>}
             {receipt.email_from && <> · from {receipt.email_from}</>}
             {receipt.email_subject && <> · “{receipt.email_subject}”</>}
             {receipt.confidence != null && <> · confidence {Math.round(Number(receipt.confidence) * 100)}%</>}
@@ -199,10 +206,13 @@ export default function ReceiptDetail() {
                 <th>Description</th>
                 <th>Store SKU</th>
                 <th className="num">Qty</th>
+                <th className="num" title="Units inside one item, e.g. 24 for a 24-count case">Pack</th>
                 <th className="num">Unit</th>
                 <th className="num">Total</th>
                 <th>Category</th>
                 <th>Woo SKU</th>
+                <th>Tax line</th>
+                <th>Use</th>
                 <th />
               </tr>
             </thead>
@@ -212,6 +222,7 @@ export default function ReceiptDetail() {
                   <td><input value={it.description} onChange={(e) => setItem(i, { description: e.target.value })} /></td>
                   <td><input className="mono" value={it.store_sku ?? ""} onChange={(e) => setItem(i, { store_sku: e.target.value })} /></td>
                   <td><input className="num" type="number" step="any" value={it.quantity ?? ""} onChange={(e) => setItem(i, { quantity: num(e.target.value) ?? 1 })} /></td>
+                  <td><input className="num pack" type="number" min="1" step="1" value={it.pack_size ?? 1} onChange={(e) => setItem(i, { pack_size: Math.max(1, Number(e.target.value) || 1) })} /></td>
                   <td><input className="num" type="number" step="0.01" value={it.unit_price ?? ""} onChange={(e) => setItem(i, { unit_price: num(e.target.value) })} /></td>
                   <td><input className="num" type="number" step="0.01" value={it.total ?? ""} onChange={(e) => setItem(i, { total: num(e.target.value) })} /></td>
                   <td>
@@ -221,6 +232,20 @@ export default function ReceiptDetail() {
                     </select>
                   </td>
                   <td><input className="mono" placeholder="—" value={it.woo_sku ?? ""} onChange={(e) => setItem(i, { woo_sku: e.target.value })} /></td>
+                  <td>
+                    <select className={it.tax_confidence != null && it.tax_confidence < 0.6 ? "unsure" : ""}
+                      title={it.tax_confidence != null ? `Confidence ${Math.round(it.tax_confidence * 100)}%` : undefined}
+                      value={it.tax_line ?? ""} onChange={(e) => setItem(i, { tax_line: e.target.value || null, tax_confidence: 1 })}>
+                      <option value="">—</option>
+                      {Object.entries(TAX_LINES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </td>
+                  <td>
+                    <select value={it.use_type ?? ""} onChange={(e) => setItem(i, { use_type: (e.target.value || null) as Draft["use_type"] })}>
+                      <option value="">—</option>
+                      {Object.entries(USE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </td>
                   <td>
                     <button
                       className="link danger"
@@ -236,18 +261,19 @@ export default function ReceiptDetail() {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={4}>
+                <td colSpan={5}>
                   <button
                     className="link"
                     onClick={() =>
                       setItems([...items, {
                         position: items.length, description: "", store_sku: null, quantity: 1,
                         unit_price: null, total: null, category_id: null, woo_sku: null,
+                        pack_size: 1, tax_line: null, use_type: null, tax_confidence: null,
                       }])}
                   >+ Add line</button>
                 </td>
                 <td className="num"><strong>{money(itemsSum, receipt.currency)}</strong></td>
-                <td colSpan={3} className="muted small">
+                <td colSpan={5} className="muted small">
                   {receipt.subtotal != null && Math.abs(itemsSum - Number(receipt.subtotal)) > 0.05 &&
                     `Subtotal is ${money(receipt.subtotal, receipt.currency)}`}
                 </td>

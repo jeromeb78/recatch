@@ -14,4 +14,4 @@ export function monogram(merchant: string | null) {
   return { letter: name[0].toUpperCase(), ...PALETTE[h % PALETTE.length] };
 }
 
-export const SOURCE_LABEL: Record<string, string> = { gmail: "Gmail", forward: "Forwarded", upload: "Photo" };
+export const SOURCE_LABEL: Record<string, string> = { gmail: "Gmail", forward: "Forwarded", upload: "Photo", extension: "Extension" };

@@ -23,3 +23,10 @@ verify_jwt = false
 
 [functions.process-upload]
 verify_jwt = true
+
+# Browser extension: authenticates with a connection code in code.
+[functions.ingest-page]
+verify_jwt = false
+
+[functions.categorize-items]
+verify_jwt = true

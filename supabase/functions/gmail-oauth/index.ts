@@ -7,10 +7,14 @@ interface State {
   uid: string;
   exp: number;
   n: string;
+  r?: string;
 }
 
-function backToApp(params: Record<string, string>): Response {
-  const url = new URL("/settings", env("APP_URL"));
+// Where the app may ask to be sent back to after Google's consent screen.
+const RETURN_PATHS = ["/settings", "/welcome"];
+
+function backToApp(params: Record<string, string>, returnTo = "/settings"): Response {
+  const url = new URL(returnTo, env("APP_URL"));
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   return Response.redirect(url.toString(), 302);
 }
@@ -23,8 +27,12 @@ Deno.serve(async (req) => {
       const user = await userFromRequest(req);
       if (!user) return json({ error: "Unauthorized" }, 401);
 
+      const body = await req.json().catch(() => ({}));
+      const r = typeof body?.return_to === "string" && RETURN_PATHS.some((p) => body.return_to.startsWith(p))
+        ? body.return_to as string
+        : undefined;
       const state = await signPayload(
-        { uid: user.id, exp: Date.now() + 10 * 60_000, n: crypto.randomUUID() } satisfies State,
+        { uid: user.id, exp: Date.now() + 10 * 60_000, n: crypto.randomUUID(), r } satisfies State,
         env("OAUTH_STATE_SECRET"),
       );
       const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -50,7 +58,7 @@ Deno.serve(async (req) => {
       if (!code || !state || state.exp < Date.now()) return backToApp({ gmail: "error", reason: "invalid_state" });
 
       const tokens = await exchangeCode(code);
-      if (!tokens.refresh_token) return backToApp({ gmail: "error", reason: "no_refresh_token" });
+      if (!tokens.refresh_token) return backToApp({ gmail: "error", reason: "no_refresh_token" }, state.r);
       const email = await userEmail(tokens.access_token);
 
       const { error } = await adminClient().from("email_connections").upsert(
@@ -65,7 +73,7 @@ Deno.serve(async (req) => {
         { onConflict: "user_id,provider,email" },
       );
       if (error) throw error;
-      return backToApp({ gmail: "connected", email });
+      return backToApp({ gmail: "connected", email }, state.r);
     }
 
     return json({ error: "Method not allowed" }, 405);

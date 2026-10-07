@@ -4,13 +4,18 @@ import { merchantKey, reviewReasons } from "./ingest.ts";
 import type { Extraction } from "./extract.ts";
 import { base64ToBytes, bytesToBase64, htmlToText, signPayload, verifyPayload } from "./utils.ts";
 
+const item = {
+  description: "", store_sku: null, quantity: 1, unit_price: null, total: null, suggested_category: null,
+  pack_size: 1, tax_line: "c22", use_type: "business" as const, tax_confidence: 0.9,
+};
+
 const base: Extraction = {
   is_receipt: true, document_type: "receipt", merchant: "Target", merchant_domain: "target.com",
   order_number: "123", purchase_date: "2026-09-01", currency: "USD", subtotal: 10, tax: 0.8,
   shipping: null, discount: null, total: 10.8, payment_method: "Visa ending 1234", suggested_category: null,
   line_items: [
-    { description: "A", store_sku: null, quantity: 2, unit_price: 2.5, total: null, suggested_category: null },
-    { description: "B", store_sku: null, quantity: 1, unit_price: null, total: 5, suggested_category: null },
+    { ...item, description: "A", quantity: 2, unit_price: 2.5, total: null },
+    { ...item, description: "B", quantity: 1, unit_price: null, total: 5 },
   ],
   confidence: 0.95, notes: null,
 };

@@ -11,6 +11,7 @@ and stored as structured data with line items.
 | **Gmail sync** | Read-only OAuth. Every 30 min, it searches for receipt emails from known store domains (online orders, Target Circle / Walmart in-store e-receipts). PDF attachments are read too. |
 | **Forwarding address** | Each user gets `inbound+<token>@yourdomain`. Forward a receipt email, or email a photo, and it gets captured. |
 | **Photo / PDF upload** | Snap a paper receipt from your phone in the web app. |
+| **Browser extension** | Bulk-imports Walmart, Target and Amazon order history (online and in-store purchases linked to the account) from your own signed-in browser. See [`extension/`](extension/README.md). |
 
 Every receipt is deduplicated by email ID and by merchant + order number. The original PDF, image or HTML
 is kept in private storage. Receipts that look off are flagged as **Needs review**: low confidence,
@@ -30,13 +31,16 @@ recatch/
 │   ├── config.toml
 │   ├── migrations/
 │   │   ├── 20261007021643_init.sql        # tables, RLS, storage bucket, views
-│   │   └── 20261007021700_cron_sync.sql   # pg_cron job (apply after Vault secrets exist)
+│   │   └── 20261007040000_cron_sync.sql   # pg_cron job (apply after Vault secrets exist)
 │   └── functions/
 │       ├── _shared/        # extract (Claude), ingest pipeline, gmail helpers, utils, tests
 │       ├── gmail-oauth/    # start consent + OAuth callback
 │       ├── gmail-sync/     # cron + "Sync now" button
 │       ├── inbound-email/  # Postmark webhook
-│       └── process-upload/ # photo/PDF uploads
+│       ├── process-upload/ # photo/PDF uploads
+│       ├── ingest-page/    # order pages sent by the browser extension
+│       └── categorize-items/ # Schedule C categorization for older line items
+├── extension/              # Chrome/Edge extension (Manifest V3, no build step)
 └── web/                    # React dashboard
 ```
 
@@ -51,10 +55,15 @@ supabase link --project-ref <your-project-ref>
 supabase db push             # applies the init migration (and the cron one, see step 5)
 ```
 
-> To apply only the first migration now, temporarily move `20261007021700_cron_sync.sql` out of the
+> To apply only the first migration now, temporarily move `20261007040000_cron_sync.sql` out of the
 > folder, or just finish step 5 (the Vault secrets) before running `db push`.
 
-In **Auth → URL Configuration**, set the Site URL to your dashboard URL and add it to the redirect URLs.
+In **Authentication → URL Configuration**, set the Site URL to your dashboard URL and add `https://<your-domain>/**`
+(and `http://localhost:5173/**` for development) to the redirect URLs, so sign-up confirmation (`/welcome`),
+password reset (`/reset-password`) and email-change links work. Under **Authentication → Sign In / Providers → Email**,
+keep **Confirm email** on. To make the app invite-only, turn off **Allow new users to sign up** and invite people from
+**Authentication → Users**. For real use, set up custom SMTP (Authentication → Emails): Supabase's built-in sender
+is rate-limited to a few emails an hour.
 
 ### 2. Google OAuth (Gmail)
 
@@ -87,7 +96,11 @@ supabase functions deploy gmail-oauth --no-verify-jwt
 supabase functions deploy gmail-sync --no-verify-jwt
 supabase functions deploy inbound-email --no-verify-jwt
 supabase functions deploy process-upload
+supabase functions deploy ingest-page --no-verify-jwt
+supabase functions deploy categorize-items
 ```
+
+(`supabase functions deploy` with no name deploys all of them using the settings in `supabase/config.toml`.)
 
 The `--no-verify-jwt` functions are called by Google, Postmark or pg_cron. They verify callers themselves
 with an HMAC-signed OAuth state, a shared secret, or the user's JWT checked in code.
@@ -101,7 +114,7 @@ select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
 select vault.create_secret('<same CRON_SECRET as the function env>', 'cron_secret');
 ```
 
-Then apply `20261007021700_cron_sync.sql` (`supabase db push`, or paste it into the SQL editor).
+Then apply `20261007040000_cron_sync.sql` (`supabase db push`, or paste it into the SQL editor).
 
 ### 6. Dashboard
 
@@ -135,6 +148,23 @@ deno check supabase/functions/*/index.ts      # typecheck the edge functions
 5. Export **receipts CSV** or **line items CSV** for your accountant or QuickBooks import. Line items have a
    `woo_sku` field, so you can map store purchases to your own product SKUs and track per-unit cost.
 
+## Accounts
+
+- **Sign up / sign in** with email + password, or a one-time email link. Email addresses are confirmed before first sign-in.
+- **Forgot password** emails a reset link that opens *Choose a new password*.
+- **Setup guide** (`/welcome`) runs once after sign-up: business description → Gmail → forwarding address → browser extension → first photo.
+- **Settings → Account**: change password or email, sign out (or sign out on every device), re-run the setup guide.
+
+## Taxes, inventory and accounting exports
+
+- Every line item gets a **Schedule C line**, **business / personal / mixed** flag and a confidence score from Claude,
+  guided by *Settings → Your business*. Older items: **Reports → Taxes → Categorize now**. Edit any item on its receipt.
+  These are organizing suggestions, not tax advice.
+- **Pack size** turns a 24-count case into 24 units. **Landed cost** spreads each order's tax, shipping and discounts across its items.
+- **Reports → Inventory & COGS**: units, spend, average and latest landed cost per Woo SKU, and unmapped inventory items.
+- **Reports → Export**: QuickBooks Online bank upload, QuickBooks itemized expenses, Xero bank statement and Xero bills CSVs,
+  with an account mapping per tax line and personal items left out by default. Check the columns against your import screen the first time.
+
 ## Getting in-store receipts by email
 
 - **Target:** In-store purchases linked to your Target Circle account appear in the app's purchase history. Target can email receipts at checkout, and those emails are picked up by Gmail sync.
@@ -146,7 +176,9 @@ deno check supabase/functions/*/index.ts      # typecheck the edge functions
 - **More stores:** set `RECEIPT_SENDERS=walmart.com,target.com,...` on the functions.
 - **Different inbound provider** (SendGrid, Mailgun, Cloudflare Email Workers): adapt the payload parsing in `inbound-email/index.ts`.
 - **QuickBooks / Xero push:** add a function that reads `receipts` where `status = 'ready'` and posts expenses.
-- **Portal scraping** (Walmart/Target order history) was deliberately left out. It breaks often, trips bot detection, and conflicts with store terms.
+- **Server-side portal scraping** (logging in to store accounts from a server) was deliberately left out: it breaks often,
+  trips bot detection and needs stored passwords. The browser extension reads order pages from the user's own signed-in browser instead,
+  at a slow, user-started pace. If a store changes its order pages, update the link patterns in `extension/stores.js`.
 
 ## Security notes
 
@@ -154,3 +186,4 @@ deno check supabase/functions/*/index.ts      # typecheck the edge functions
 - Every table has RLS limited to `auth.uid()`. Storage objects live under `{user_id}/…` with matching policies.
 - Extraction never stores full card numbers; the model is told to keep only "Visa ending 1234".
 - Consider encrypting `refresh_token` with pgsodium/Vault if you open this up beyond your household.
+- Extension connection codes are random 256-bit tokens; only their SHA-256 hash is stored (`api_tokens`). Revoke them in Settings.

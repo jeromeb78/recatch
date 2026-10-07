@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Receipt Catcher</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header><strong>Receipt Catcher</strong><button id="disconnect" class="link" hidden>Disconnect</button></header>
+
+  <section id="connect" hidden>
+    <p>Paste the connection code from <b>Receipt Catcher → Settings → Browser extension</b>.</p>
+    <label for="code">Connection code</label>
+    <textarea id="code" rows="3" spellcheck="false"></textarea>
+    <button id="connectBtn" class="primary">Connect</button>
+    <p id="connectMsg" class="msg"></p>
+  </section>
+
+  <section id="main" hidden>
+    <div id="job" hidden>
+      <div class="row"><b id="jobTitle">Importing</b><span id="jobCount" class="muted"></span></div>
+      <div class="bar"><span id="jobBar"></span></div>
+      <p id="jobStats" class="muted small"></p>
+      <p id="jobError" class="msg warn" hidden></p>
+      <div class="row gap">
+        <button id="pauseBtn">Pause</button>
+        <button id="resumeBtn" class="primary" hidden>Resume</button>
+        <button id="clearBtn" class="link">Clear</button>
+      </div>
+    </div>
+
+    <div id="onStore" hidden>
+      <p><b id="storeName"></b> order history</p>
+      <button id="scanBtn" class="primary">Find orders on this page</button>
+      <p id="scanMsg" class="small muted"></p>
+      <button id="importBtn" class="primary" hidden></button>
+      <p class="small muted">Load more orders on the page first (scroll, “Load more”, or switch to the In-store tab), then find again. Already-imported orders are skipped.</p>
+    </div>
+
+    <div id="offStore" hidden>
+      <p>Open your order history:</p>
+      <div class="links">
+        <a data-store="walmart" href="#">Walmart</a>
+        <a data-store="target" href="#">Target</a>
+        <a data-store="amazon" href="#">Amazon</a>
+      </div>
+    </div>
+
+    <hr>
+    <button id="sendBtn">Send just this page</button>
+    <p class="small muted">For a single receipt or order page from any store.</p>
+    <p id="sendMsg" class="msg"></p>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -13,7 +13,8 @@ export interface ReceiptFile {
 
 export interface Receipt {
   id: string;
-  source: "gmail" | "forward" | "upload";
+  source: "gmail" | "forward" | "upload" | "extension";
+  source_url?: string | null;
   status: "ready" | "needs_review";
   review_reasons: string[];
   document_type: string;
@@ -47,6 +48,10 @@ export interface LineItem {
   total: number | null;
   category_id: string | null;
   woo_sku: string | null;
+  pack_size: number;
+  tax_line: string | null;
+  use_type: "business" | "personal" | "mixed" | null;
+  tax_confidence: number | null;
 }
 
 export interface Connection {

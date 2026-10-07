@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import { useCategories } from "../lib/useCategories";
 import { date, relative } from "../lib/format";
 import type { Connection } from "../lib/types";
+import { AccountSection, BusinessProfile, ExtensionSection } from "../components/SettingsSections";
 
 const INBOUND = (import.meta.env.VITE_INBOUND_ADDRESS as string | undefined) ?? "";
 
@@ -28,7 +29,7 @@ async function invokeError(error: unknown): Promise<string> {
   return body?.error ?? (error as Error).message;
 }
 
-export default function Settings({ userId }: { userId: string }) {
+export default function Settings({ userId, email }: { userId: string; email: string }) {
   const [params, setParams] = useSearchParams();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [token, setToken] = useState<string | null>(null);
@@ -161,7 +162,10 @@ export default function Settings({ userId }: { userId: string }) {
         )}
       </section>
 
+      <ExtensionSection userId={userId} />
+      <BusinessProfile userId={userId} />
       <Categories />
+      <AccountSection email={email} />
     </div>
   );
 }

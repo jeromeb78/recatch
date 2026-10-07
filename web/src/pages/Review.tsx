@@ -4,6 +4,7 @@ import { BUCKET, supabase } from "../lib/supabase";
 import { useCategories } from "../lib/useCategories";
 import { date, money } from "../lib/format";
 import { SOURCE_LABEL } from "../lib/merchant";
+import { TAX_LINES, taxShort } from "../lib/tax";
 import { AlertIcon, CheckIcon, CloseIcon, FileIcon } from "../components/Icons";
 import type { LineItem, Receipt } from "../lib/types";
 
@@ -178,8 +179,16 @@ export default function Review() {
                   ) : (
                     <button className="chip add" onClick={() => { setEditing(it.id); setSkuDraft(""); }}>+ Map to SKU</button>
                   )}
-                  {it.category_id && catById.get(it.category_id) && (
+                  {it.tax_line ? (
+                    <span className={`chip tax ${it.tax_confidence != null && it.tax_confidence < 0.6 ? "unsure" : ""}`}
+                      title={TAX_LINES[it.tax_line] ?? it.tax_line}>
+                      {taxShort(it.tax_line)}{it.use_type === "mixed" ? " · mixed" : ""}
+                    </span>
+                  ) : it.category_id && catById.get(it.category_id) ? (
                     <span className="chip cat">{catById.get(it.category_id)!.name}</span>
+                  ) : null}
+                  {it.pack_size > 1 && it.total != null && (
+                    <span className="muted small">{it.quantity * it.pack_size} units · {money(Number(it.total) / (it.quantity * it.pack_size), current.currency)}/unit</span>
                   )}
                 </div>
               </div>

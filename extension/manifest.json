@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Receipt Catcher",
+  "version": "0.1.0",
+  "description": "Import your Walmart, Target and Amazon order history into Receipt Catcher.",
+  "action": { "default_popup": "popup.html", "default_title": "Receipt Catcher" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["storage", "tabs", "scripting", "activeTab"],
+  "host_permissions": [
+    "https://www.walmart.com/*",
+    "https://www.target.com/*",
+    "https://www.amazon.com/*",
+    "https://*.supabase.co/*"
+  ]
+}

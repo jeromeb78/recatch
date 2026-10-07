@@ -9,7 +9,7 @@ export interface RawFile {
 
 export interface IngestInput {
   userId: string;
-  source: "gmail" | "forward" | "upload";
+  source: "gmail" | "forward" | "upload" | "extension";
   /** Dedupe key: Gmail message id, Postmark MessageID, or upload path. */
   messageId?: string;
   connectionId?: string;
@@ -24,6 +24,10 @@ export interface IngestInput {
   existingFiles?: { path: string; mime: string; name: string }[];
   /** Don't copy pdfs/images to storage (they're already there). */
   skipStore?: boolean;
+  /** Web page the receipt came from (browser extension). */
+  sourceUrl?: string;
+  /** File name for the stored original text/html (default email.*). */
+  rawName?: string;
 }
 
 export type IngestOutcome =
@@ -88,7 +92,10 @@ export async function ingest(input: IngestInput): Promise<IngestOutcome> {
     if (existing) return { outcome: "duplicate", receiptId: existing.id, detail: "Already captured" };
   }
 
-  const { data: cats } = await db.from("categories").select("id, name").eq("user_id", input.userId);
+  const [{ data: cats }, { data: profile }] = await Promise.all([
+    db.from("categories").select("id, name").eq("user_id", input.userId),
+    db.from("profiles").select("business_description").eq("user_id", input.userId).maybeSingle(),
+  ]);
   const categories = (cats ?? []) as { id: string; name: string }[];
   const categoryId = (name: string | null) =>
     name ? categories.find((c) => c.name.toLowerCase() === name.toLowerCase())?.id ?? null : null;
@@ -103,6 +110,7 @@ export async function ingest(input: IngestInput): Promise<IngestOutcome> {
     pdfs: input.pdfs,
     images: input.images,
     categories: categories.map((c) => c.name),
+    businessDescription: profile?.business_description,
   });
 
   if (!x.is_receipt || NON_RECEIPT_TYPES.has(x.document_type)) {
@@ -129,8 +137,9 @@ export async function ingest(input: IngestInput): Promise<IngestOutcome> {
   const files = [...(input.existingFiles ?? [])];
   const toUpload: RawFile[] = input.skipStore ? [] : [...(input.pdfs ?? []), ...(input.images ?? [])];
   if (!input.skipStore) {
-    if (input.html) toUpload.unshift({ name: "email.html", mime: "text/html", bytes: new TextEncoder().encode(input.html) });
-    else if (input.text) toUpload.unshift({ name: "email.txt", mime: "text/plain", bytes: new TextEncoder().encode(input.text) });
+    const raw = input.rawName ?? "email";
+    if (input.html) toUpload.unshift({ name: `${raw}.html`, mime: "text/html", bytes: new TextEncoder().encode(input.html) });
+    else if (input.text) toUpload.unshift({ name: `${raw}.txt`, mime: "text/plain", bytes: new TextEncoder().encode(input.text) });
   }
   for (const [i, f] of toUpload.entries()) {
     const path = `${input.userId}/${receiptId}/${i}-${safeFilename(f.name)}`;
@@ -149,6 +158,7 @@ export async function ingest(input: IngestInput): Promise<IngestOutcome> {
     source: input.source,
     source_message_id: input.messageId ?? null,
     connection_id: input.connectionId ?? null,
+    source_url: input.sourceUrl ?? null,
     status: reasons.length ? "needs_review" : "ready",
     review_reasons: reasons,
     document_type: x.document_type,
@@ -191,6 +201,10 @@ export async function ingest(input: IngestInput): Promise<IngestOutcome> {
         unit_price: li.unit_price,
         total: lineTotal(li),
         category_id: categoryId(li.suggested_category),
+        pack_size: li.pack_size && li.pack_size > 0 ? Math.round(li.pack_size) : 1,
+        tax_line: li.tax_line ?? null,
+        use_type: li.use_type ?? null,
+        tax_confidence: li.tax_confidence != null ? Math.max(0, Math.min(1, li.tax_confidence)) : null,
       })),
     );
     if (error) throw new Error(`Line item insert failed: ${error.message}`);

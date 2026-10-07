@@ -129,3 +129,24 @@ export function htmlToText(html: string): string {
 export function safeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120) || "file";
 }
+
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Resolves the user from a browser-extension connection token (`Authorization: Bearer rc_…`). */
+export async function userFromApiToken(req: Request): Promise<string | null> {
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!token.startsWith("rc_") || token.length < 20) return null;
+  const db = adminClient();
+  const { data } = await db
+    .from("api_tokens")
+    .select("id, user_id")
+    .eq("token_hash", await sha256Hex(token))
+    .is("revoked_at", null)
+    .maybeSingle();
+  if (!data) return null;
+  await db.from("api_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
+  return data.user_id as string;
+}

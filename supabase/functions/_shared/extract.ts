@@ -1,5 +1,6 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { bytesToBase64, env } from "./utils.ts";
+import { TAX_GUIDANCE, TAX_LINE_CODES, USE_TYPES } from "./tax.ts";
 
 export type DocumentType =
   | "receipt"
@@ -16,6 +17,10 @@ export interface ExtractedLineItem {
   unit_price: number | null;
   total: number | null;
   suggested_category: string | null;
+  pack_size: number | null;
+  tax_line: string;
+  use_type: "business" | "personal" | "mixed";
+  tax_confidence: number;
 }
 
 export interface Extraction {
@@ -47,6 +52,8 @@ export interface ExtractInput {
   pdfs?: { name: string; bytes: Uint8Array }[];
   images?: { name: string; mime: string; bytes: Uint8Array }[];
   categories: string[];
+  /** What the user's business does, to guide tax categorization. */
+  businessDescription?: string | null;
 }
 
 export const MAX_TEXT_CHARS = 150_000;
@@ -91,7 +98,10 @@ const SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["description", "store_sku", "quantity", "unit_price", "total", "suggested_category"],
+        required: [
+          "description", "store_sku", "quantity", "unit_price", "total", "suggested_category",
+          "pack_size", "tax_line", "use_type", "tax_confidence",
+        ],
         properties: {
           description: { type: "string" },
           store_sku: { ...nullable("string"), description: "Store item number / UPC / ASIN / DPCI if shown." },
@@ -99,6 +109,13 @@ const SCHEMA = {
           unit_price: nullable("number"),
           total: { ...nullable("number"), description: "Line total after quantity, before order-level tax." },
           suggested_category: nullable("string"),
+          pack_size: {
+            ...nullable("integer"),
+            description: "Units inside ONE purchased item, e.g. 24 for a 24-count case, 5 for a 5-pack. 1 or null if single.",
+          },
+          tax_line: { type: "string", enum: TAX_LINE_CODES },
+          use_type: { type: "string", enum: [...USE_TYPES] },
+          tax_confidence: { type: "number" },
         },
       },
     },
@@ -110,14 +127,16 @@ const SCHEMA = {
 const SYSTEM = `You extract structured purchase data from receipts, order confirmations and invoices for a personal/small-business expense ledger.
 
 Rules:
-- Input may be a forwarded email, an HTML email converted to text, a PDF, or a photo of a paper receipt. For forwarded emails, the merchant is the original sender, not the person who forwarded it.
+- Input may be a forwarded email, an HTML email converted to text, a PDF, a photo of a paper receipt, or the text of a store's order-details / receipt web page (ignore site navigation, recommendations and ads on those pages). For forwarded emails, the merchant is the original sender, not the person who forwarded it.
 - Marketing emails, shipping/delivery updates without prices, account notices and surveys are not receipts: set is_receipt=false and document_type to "shipping_notice" or "other", and leave fields null with an empty line_items list.
 - Money values are plain numbers without currency symbols. Discounts are positive numbers.
 - Copy order numbers exactly. Use YYYY-MM-DD for dates; if the year is missing, infer it from the email date.
 - One line item per distinct product line. Include quantity and unit price when shown. Do not include tax, shipping, or subtotal rows as line items.
 - Never output full card numbers, only the brand and last four digits.
 - suggested_category must be exactly one of the user's category names provided, or null if none fits.
-- Lower confidence when the image is blurry, text is cut off, or totals are ambiguous, and say why in notes.`;
+- Lower confidence when the image is blurry, text is cut off, or totals are ambiguous, and say why in notes.
+
+${TAX_GUIDANCE}`;
 
 let client: Anthropic | null = null;
 
@@ -156,6 +175,7 @@ export async function extractReceipt(input: ExtractInput): Promise<{ data: Extra
     type: "text",
     text: [
       `User's categories: ${input.categories.length ? input.categories.join(" | ") : "(none)"}`,
+      input.businessDescription && `User's business: ${input.businessDescription}`,
       header && `\n--- Email headers ---\n${header}`,
       text && `\n--- Body ---\n${text}`,
       "\nExtract the purchase data.",
