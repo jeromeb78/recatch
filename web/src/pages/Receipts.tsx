@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { useCategories } from "../lib/useCategories";
-import { date, money, signedTotal } from "../lib/format";
+import { money, signedTotal } from "../lib/format";
+import { DownloadIcon, SearchIcon } from "../components/Icons";
+import ReceiptRow from "../components/ReceiptRow";
 import { download, toCsv } from "../lib/csv";
 import type { Receipt } from "../lib/types";
 
@@ -150,97 +152,84 @@ export default function Receipts() {
   }
 
   return (
-    <div>
-      <div className="stats">
-        <div className="stat"><span>Total</span><strong>{money(totals.all)}</strong></div>
-        <div className="stat"><span>Business</span><strong>{money(totals.business)}</strong></div>
-        <div className="stat"><span>Personal / other</span><strong>{money(totals.personal)}</strong></div>
-        <button className="stat clickable" onClick={() => setFilters({ status: filters.status ? "" : "needs_review" })}>
-          <span>Needs review</span><strong className={totals.review ? "warn" : ""}>{totals.review}</strong>
-        </button>
+    <div className="stack">
+      <div className="page-head row-between">
+        <h1>All receipts</h1>
+        <div className="head-actions">
+          <button className="btn sm" onClick={exportReceipts} disabled={!receipts?.length}>
+            <DownloadIcon size={16} />Receipts CSV
+          </button>
+          <button className="btn sm" onClick={exportLineItems} disabled={!receipts?.length || exporting}>
+            <DownloadIcon size={16} />{exporting ? "Exporting…" : "Line items CSV"}
+          </button>
+        </div>
       </div>
 
-      <div className="filters">
+      <div className="search">
+        <SearchIcon />
         <input
           type="search"
-          placeholder="Search merchant, order #, items…"
+          aria-label="Search receipts"
+          placeholder="Search store, order #, items…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={filters.status} onChange={(e) => setFilters({ status: e.target.value })}>
-          <option value="">Any status</option>
-          <option value="ready">Ready</option>
-          <option value="needs_review">Needs review</option>
-        </select>
-        <select value={filters.category} onChange={(e) => setFilters({ category: e.target.value })}>
-          <option value="">All categories</option>
-          <option value="none">Uncategorized</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={filters.source} onChange={(e) => setFilters({ source: e.target.value })}>
-          <option value="">All sources</option>
-          <option value="gmail">Gmail</option>
-          <option value="forward">Forwarded</option>
-          <option value="upload">Upload</option>
-        </select>
-        <input type="date" value={filters.from} onChange={(e) => setFilters({ from: e.target.value })} title="From" />
-        <input type="date" value={filters.to} onChange={(e) => setFilters({ to: e.target.value })} title="To" />
-        <div className="spacer" />
-        <button onClick={exportReceipts} disabled={!receipts?.length}>Receipts CSV</button>
-        <button onClick={exportLineItems} disabled={!receipts?.length || exporting}>
-          {exporting ? "Exporting…" : "Line items CSV"}
-        </button>
       </div>
+
+      <div className="chips" role="group" aria-label="Quick filters">
+        <button className={`chip-btn ${!filters.status ? "on" : ""}`} onClick={() => setFilters({ status: "" })}>All</button>
+        <button className={`chip-btn ${filters.status === "needs_review" ? "on" : ""}`}
+          onClick={() => setFilters({ status: filters.status === "needs_review" ? "" : "needs_review" })}>
+          Needs review{totals.review > 0 && !filters.status ? ` · ${totals.review}` : ""}
+        </button>
+        {(["gmail", "forward", "upload"] as const).map((s) => (
+          <button key={s} className={`chip-btn ${filters.source === s ? "on" : ""}`}
+            onClick={() => setFilters({ source: filters.source === s ? "" : s })}>
+            {s === "gmail" ? "Gmail" : s === "forward" ? "Forwarded" : "Photo"}
+          </button>
+        ))}
+      </div>
+
+      <details className="more-filters" open={!!(filters.category || filters.from || filters.to)}>
+        <summary>Category &amp; dates</summary>
+        <div className="filters">
+          <label>Category
+            <select value={filters.category} onChange={(e) => setFilters({ category: e.target.value })}>
+              <option value="">All categories</option>
+              <option value="none">Uncategorized</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label>From<input type="date" value={filters.from} onChange={(e) => setFilters({ from: e.target.value })} /></label>
+          <label>To<input type="date" value={filters.to} onChange={(e) => setFilters({ to: e.target.value })} /></label>
+        </div>
+      </details>
+
+      {receipts && receipts.length > 0 && (
+        <div className="summary-line">
+          <span>{receipts.length} receipt{receipts.length === 1 ? "" : "s"}</span>
+          <span>Total <b>{money(totals.all)}</b></span>
+          <span>Business <b>{money(totals.business)}</b></span>
+        </div>
+      )}
 
       {error && <p className="error">{error}</p>}
       {receipts === null ? (
         <p className="muted">Loading…</p>
       ) : receipts.length === 0 ? (
         <div className="card empty">
-          <p>No receipts yet.</p>
+          <p><b>No receipts match.</b></p>
           <p className="muted">
             Connect Gmail or copy your forwarding address in <Link to="/settings">Settings</Link>, or{" "}
             <Link to="/add">snap a photo</Link>.
           </p>
         </div>
       ) : (
-        <table className="list">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Merchant</th>
-              <th className="hide-sm">Order #</th>
-              <th className="hide-sm">Category</th>
-              <th className="num">Total</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {receipts.map((r) => {
-              const cat = r.category_id ? catById.get(r.category_id) : undefined;
-              return (
-                <tr key={r.id}>
-                  <td className="nowrap">{date(r.purchase_date)}</td>
-                  <td>
-                    <Link to={`/receipts/${r.id}`}>{r.merchant ?? "Unknown merchant"}</Link>
-                    {r.document_type === "refund" && <span className="pill">refund</span>}
-                    <span className="source">{r.source}</span>
-                  </td>
-                  <td className="hide-sm mono">{r.order_number ?? ""}</td>
-                  <td className="hide-sm">
-                    {cat && <span className="cat" style={{ borderColor: cat.color ?? undefined }}>{cat.name}</span>}
-                  </td>
-                  <td className="num">{money(signedTotal(r), r.currency)}</td>
-                  <td>
-                    {r.status === "needs_review" && (
-                      <span className="pill warn" title={r.review_reasons.join("\n")}>Needs review</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="card list-card">
+          {receipts.map((r) => (
+            <ReceiptRow key={r.id} r={r} category={r.category_id ? catById.get(r.category_id) : undefined} />
+          ))}
+        </div>
       )}
     </div>
   );

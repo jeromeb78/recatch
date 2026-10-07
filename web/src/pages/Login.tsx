@@ -25,7 +25,7 @@ export default function Login() {
   return (
     <div className="center">
       <form className="card login" onSubmit={submit}>
-        <h1>🧾 Receipt Catcher</h1>
+        <h1>Receipt Catcher</h1>
         <p className="muted">Every receipt from your inbox, forwarded mail and paper photos, in one ledger.</p>
         {state === "sent" ? (
           <p>Check <strong>{email}</strong> for a sign-in link.</p>

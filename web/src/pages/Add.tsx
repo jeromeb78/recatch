@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BUCKET, supabase } from "../lib/supabase";
+import { CameraIcon, FileIcon } from "../components/Icons";
 
 type Result = { name: string; state: "working" | "done" | "error"; text: string; receiptId?: string };
 
@@ -80,8 +81,8 @@ export default function Add() {
     <div className="narrow">
       <h1>Add a receipt</h1>
       <div className="add-buttons">
-        <button className="big primary" onClick={() => photoRef.current?.click()}>📷 Take photo</button>
-        <button className="big" onClick={() => fileRef.current?.click()}>📄 Upload photo or PDF</button>
+        <button className="big primary" onClick={() => photoRef.current?.click()}><CameraIcon size={20} />Take photo</button>
+        <button className="big" onClick={() => fileRef.current?.click()}><FileIcon size={20} />Upload photo or PDF</button>
       </div>
       <input ref={photoRef} type="file" accept="image/*" capture="environment" hidden
         onChange={(e) => { handle(e.target.files); e.target.value = ""; }} />
