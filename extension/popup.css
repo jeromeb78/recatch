@@ -1,0 +1,25 @@
+:root { --accent: #2348E6; --text: #0F172A; --muted: #5B6474; --border: #E3E6EB; --bg: #F6F7F9; --warn: #7A4100; --warn-bg: #FFF4DE; --ok: #146C43; }
+* { box-sizing: border-box; }
+body { width: 340px; margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text); background: var(--bg); }
+header { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: #fff; border-bottom: 1px solid var(--border); }
+section { padding: 12px 14px 14px; }
+p { margin: 0 0 10px; }
+label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+textarea { width: 100%; font: 12px ui-monospace, Menlo, monospace; border: 1px solid var(--border); border-radius: 10px; padding: 8px; margin-bottom: 10px; }
+button { font: inherit; font-weight: 600; min-height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: #fff; color: var(--text); cursor: pointer; width: 100%; margin-bottom: 8px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.link { width: auto; min-height: 0; border: none; background: none; color: var(--accent); padding: 0; margin: 0; font-weight: 500; }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.row.gap { gap: 8px; }
+.row.gap button { width: auto; flex: 1; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.msg { font-size: 13px; }
+.msg.ok { color: var(--ok); }
+.msg.warn, .msg.error { color: var(--warn); background: var(--warn-bg); padding: 8px 10px; border-radius: 8px; }
+.bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+.bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.links { display: flex; gap: 8px; }
+.links a { flex: 1; text-align: center; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text); text-decoration: none; font-weight: 600; }
+hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }

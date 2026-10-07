@@ -80,6 +80,12 @@ export default function Home() {
         </Link>
       )}
 
+      <div className="quick-links">
+        <Link to="/reports?tab=inventory" className="quick-link"><b>Inventory &amp; COGS</b><span className="muted small">Cost per unit by SKU</span></Link>
+        <Link to="/reports?tab=taxes" className="quick-link"><b>Taxes</b><span className="muted small">Schedule C totals</span></Link>
+        <Link to="/reports?tab=export" className="quick-link"><b>Export</b><span className="muted small">QuickBooks &amp; Xero</span></Link>
+      </div>
+
       <section>
         <div className="section-head">
           <h2>Recent</h2>

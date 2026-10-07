@@ -5,6 +5,7 @@ import { useCategories } from "../lib/useCategories";
 import { money, signedTotal } from "../lib/format";
 import { DownloadIcon, SearchIcon } from "../components/Icons";
 import ReceiptRow from "../components/ReceiptRow";
+import { SOURCE_LABEL } from "../lib/merchant";
 import { download, toCsv } from "../lib/csv";
 import type { Receipt } from "../lib/types";
 
@@ -182,10 +183,10 @@ export default function Receipts() {
           onClick={() => setFilters({ status: filters.status === "needs_review" ? "" : "needs_review" })}>
           Needs review{totals.review > 0 && !filters.status ? ` · ${totals.review}` : ""}
         </button>
-        {(["gmail", "forward", "upload"] as const).map((s) => (
+        {(["gmail", "forward", "upload", "extension"] as const).map((s) => (
           <button key={s} className={`chip-btn ${filters.source === s ? "on" : ""}`}
             onClick={() => setFilters({ source: filters.source === s ? "" : s })}>
-            {s === "gmail" ? "Gmail" : s === "forward" ? "Forwarded" : "Photo"}
+            {SOURCE_LABEL[s]}
           </button>
         ))}
       </div>
