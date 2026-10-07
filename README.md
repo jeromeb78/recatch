@@ -19,20 +19,20 @@ a missing total or date, or line items that don't add up to the subtotal.
 ## Stack
 
 - **Supabase**: Postgres (with RLS), Auth (magic link), Storage, Edge Functions (Deno), pg_cron
-- **Claude API**: receipt extraction via forced tool use, so the output is always strict JSON (text, PDFs and images)
+- **Claude API**: receipt extraction with structured outputs (JSON schema), so the output is always strict JSON (text, PDFs and images). Model is `claude-opus-5-5` by default; override with `CLAUDE_MODEL`
 - **Gmail REST API**: no SDK dependency
 - **Postmark Inbound**: forwarding address (any inbound-email provider works with small changes)
 - **React + Vite** dashboard
 
 ```
-receipt-catcher/
+recatch/
 ├── supabase/
 │   ├── config.toml
 │   ├── migrations/
 │   │   ├── 20261006000000_init.sql        # tables, RLS, storage bucket, views
 │   │   └── 20261006000100_cron_sync.sql   # pg_cron job (apply after Vault secrets exist)
 │   └── functions/
-│       ├── _shared/        # extract (Claude), ingest pipeline, gmail helpers, utils
+│       ├── _shared/        # extract (Claude), ingest pipeline, gmail helpers, utils, tests
 │       ├── gmail-oauth/    # start consent + OAuth callback
 │       ├── gmail-sync/     # cron + "Sync now" button
 │       ├── inbound-email/  # Postmark webhook
@@ -114,6 +114,14 @@ npm run dev                    # http://localhost:5173
 
 To deploy, import the repo into Vercel or Netlify, set the root to `web/`, and add the three `VITE_*` env vars.
 SPA rewrites are already included (`vercel.json`, `public/_redirects`). Remember to update `APP_URL` and the Supabase Auth URLs to the production domain.
+
+### Checks
+
+```bash
+cd web && npm run build                       # typecheck + production build
+deno test supabase/functions/_shared          # validation rules, HTML→text, signed OAuth state
+deno check supabase/functions/*/index.ts      # typecheck the edge functions
+```
 
 ## Using it
 
