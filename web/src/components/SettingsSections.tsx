@@ -90,6 +90,7 @@ export function ExtensionSection({ userId, compact = false }: { userId: string; 
           Catcher extension (desktop Chrome or Edge), then paste a connection code into it.
         </p>
       </>}
+      <InstallExtension />
       {code ? (
         <div className="stack-sm">
           <div className="copy">
@@ -102,7 +103,7 @@ export function ExtensionSection({ userId, compact = false }: { userId: string; 
           <button className="link" onClick={() => setCode(null)}>Done</button>
         </div>
       ) : (
-        <button className="primary" onClick={create}>Create connection code</button>
+        <button className="primary" onClick={create}>2 · Create connection code</button>
       )}
       {error && <p className="error">{error}</p>}
       {tokens.length > 0 && (
@@ -171,6 +172,103 @@ export function AccountSection({ email }: { email: string }) {
         <button onClick={() => supabase.auth.signOut()}>Sign out</button>
         <button onClick={() => supabase.auth.signOut({ scope: "global" })} className="link">Sign out everywhere</button>
       </div>
+    </section>
+  );
+}
+
+/* ---------------- Extension install ---------------- */
+
+const STORE_URL = (import.meta.env.VITE_EXTENSION_STORE_URL as string | undefined) || "";
+
+function InstallExtension() {
+  return (
+    <div className="install">
+      {STORE_URL ? (
+        <a className="btn" href={STORE_URL} target="_blank" rel="noreferrer">1 · Add to Chrome</a>
+      ) : (
+        <a className="btn" href="/receipt-catcher-extension.zip" download>1 · Download extension (.zip)</a>
+      )}
+      <details>
+        <summary className="small">{STORE_URL ? "Install from a file instead" : "How to install the .zip"}</summary>
+        <ol className="small muted">
+          {STORE_URL && <li><a href="/receipt-catcher-extension.zip" download>Download the .zip</a></li>}
+          <li>Unzip it into a folder you’ll keep (Chrome loads it from there).</li>
+          <li>Open <code>chrome://extensions</code> (or <code>edge://extensions</code>) and turn on <b>Developer mode</b>.</li>
+          <li>Click <b>Load unpacked</b> and choose the unzipped folder, then pin Receipt Catcher from the puzzle-piece menu.</li>
+          <li>Click its icon and paste the connection code from step 2.</li>
+        </ol>
+      </details>
+    </div>
+  );
+}
+
+/* ---------------- Claude connector ---------------- */
+
+interface Grant { id: string; client_id: string; created_at: string; last_used_at: string | null; client: { client_name: string } | null }
+
+const IMPORT_PROMPT = `Use Receipt Catcher to import my order history. Open my Walmart purchase history (walmart.com → Account → Purchase history). Collect the order links for the last 12 months, call check_imported to skip ones already in Receipt Catcher, then open each new order one at a time and call add_receipt with the page's full text and URL. Don't change, cancel or reorder anything. If a sign-in or CAPTCHA appears, stop and ask me. Finish with how many were added.`;
+
+export function ClaudeSection() {
+  const [grants, setGrants] = useState<Grant[]>([]);
+  const [copied, setCopied] = useState<string | null>(null);
+  const url = `${window.location.origin}/mcp`;
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("oauth_tokens")
+      .select("id, client_id, created_at, last_used_at, client:oauth_clients(client_name)")
+      .is("revoked_at", null).order("created_at", { ascending: false });
+    // One row per connected app (refreshes create new token rows).
+    const seen = new Set<string>();
+    setGrants(((data ?? []) as unknown as Grant[]).filter((g) => !seen.has(g.client_id) && seen.add(g.client_id)));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function copy(text: string, key: string) {
+    await navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1500);
+  }
+
+  async function disconnect(g: Grant) {
+    if (!confirm(`Disconnect ${g.client?.client_name ?? "this app"}? It will lose access to Receipt Catcher right away.`)) return;
+    await supabase.from("oauth_tokens").update({ revoked_at: new Date().toISOString() }).eq("client_id", g.client_id).is("revoked_at", null);
+    load();
+  }
+
+  return (
+    <section className="card">
+      <h2>Claude</h2>
+      <p className="muted small">
+        Connect Receipt Catcher to Claude to ask about your spending and inventory costs, add receipts from chat, and — with
+        Claude in Chrome — import store order history in your own browser.
+      </p>
+      <div className="copy">
+        <code>{url}</code>
+        <button onClick={() => copy(url, "url")}>{copied === "url" ? "Copied" : "Copy"}</button>
+      </div>
+      <ol className="small muted steps-plain">
+        <li>In Claude, open <b>Settings → Connectors → Add custom connector</b>.</li>
+        <li>Name it “Receipt Catcher”, paste the URL above, and click <b>Add</b>, then <b>Connect</b>.</li>
+        <li>Sign in here if asked and click <b>Allow</b>.</li>
+      </ol>
+      <details>
+        <summary className="small">Prompt for importing order history with Claude in Chrome</summary>
+        <p className="small muted prompt-text">{IMPORT_PROMPT}</p>
+        <button className="btn sm" onClick={() => copy(IMPORT_PROMPT, "prompt")}>{copied === "prompt" ? "Copied" : "Copy prompt"}</button>
+      </details>
+      {grants.length > 0 && (
+        <div className="token-list">
+          {grants.map((g) => (
+            <div key={g.client_id} className="conn">
+              <div>
+                <strong>{g.client?.client_name ?? "Connected app"}</strong>
+                <div className="muted small">Connected {new Date(g.created_at).toLocaleDateString()} · last used {relative(g.last_used_at)}</div>
+              </div>
+              <button className="link danger" onClick={() => disconnect(g)}>Disconnect</button>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

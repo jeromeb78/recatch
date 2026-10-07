@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase";
 import { useCategories } from "../lib/useCategories";
 import { date, relative } from "../lib/format";
 import type { Connection } from "../lib/types";
-import { AccountSection, BusinessProfile, ExtensionSection } from "../components/SettingsSections";
+import { AccountSection, BusinessProfile, ClaudeSection, ExtensionSection } from "../components/SettingsSections";
 
 const INBOUND = (import.meta.env.VITE_INBOUND_ADDRESS as string | undefined) ?? "";
 
@@ -163,6 +163,7 @@ export default function Settings({ userId, email }: { userId: string; email: str
       </section>
 
       <ExtensionSection userId={userId} />
+      <ClaudeSection />
       <BusinessProfile userId={userId} />
       <Categories />
       <AccountSection email={email} />

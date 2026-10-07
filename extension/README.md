@@ -3,10 +3,18 @@
 Imports order history from Walmart, Target and Amazon (and any single receipt page) into Receipt Catcher,
 using the store sessions already signed in to this browser. No store passwords are stored anywhere.
 
-## Install (developer mode)
-1. Chrome → `chrome://extensions` → turn on **Developer mode** → **Load unpacked** → pick this `extension/` folder.
-2. In Receipt Catcher, open **Settings → Browser extension → Create connection code**, copy it.
-3. Click the extension icon, paste the code, **Connect**.
+## Install
+- **From the Chrome Web Store** (once published): Settings → Browser extension → **Add to Chrome**.
+- **From the app's download:** Settings → Browser extension → **Download extension (.zip)**, unzip into a folder you keep,
+  `chrome://extensions` → **Developer mode** → **Load unpacked** → pick the folder.
+- **From this repo:** Load unpacked → pick this `extension/` folder.
+
+Then in Receipt Catcher, **Settings → Browser extension → Create connection code**, click the extension icon, paste the code, **Connect**.
+
+## Build and publish
+`./extension/build.sh` creates `extension/dist/receipt-catcher-extension-<version>.zip` (upload this to the Chrome Web Store)
+and refreshes `web/public/receipt-catcher-extension.zip` (the app's download link). Bump `version` in `manifest.json` for each
+store upload. Listing text, permission justifications and screenshots: [`STORE_LISTING.md`](STORE_LISTING.md), `store/`.
 
 ## Use
 1. Open your Walmart purchase history, Target orders (Online and In-store tabs), or Amazon Your Orders.

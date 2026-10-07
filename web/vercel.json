@@ -1,3 +1,13 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/mcp", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp" },
+    { "source": "/.well-known/oauth-protected-resource/:path*", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-protected-resource" },
+    { "source": "/.well-known/oauth-protected-resource", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-protected-resource" },
+    { "source": "/.well-known/oauth-authorization-server/:path*", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-authorization-server" },
+    { "source": "/.well-known/oauth-authorization-server", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-authorization-server" },
+    { "source": "/.well-known/openid-configuration", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/openid-configuration" },
+    { "source": "/oauth/register", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/oauth/register" },
+    { "source": "/oauth/token", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/oauth/token" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

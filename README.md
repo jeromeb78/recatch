@@ -31,7 +31,7 @@ recatch/
 │   ├── config.toml
 │   ├── migrations/
 │   │   ├── 20261007021643_init.sql        # tables, RLS, storage bucket, views
-│   │   └── 20261007040000_cron_sync.sql   # pg_cron job (apply after Vault secrets exist)
+│   │   └── 20261008000000_cron_sync.sql   # pg_cron job (apply after Vault secrets exist)
 │   └── functions/
 │       ├── _shared/        # extract (Claude), ingest pipeline, gmail helpers, utils, tests
 │       ├── gmail-oauth/    # start consent + OAuth callback
@@ -55,7 +55,7 @@ supabase link --project-ref <your-project-ref>
 supabase db push             # applies the init migration (and the cron one, see step 5)
 ```
 
-> To apply only the first migration now, temporarily move `20261007040000_cron_sync.sql` out of the
+> To apply only the first migration now, temporarily move `20261008000000_cron_sync.sql` out of the
 > folder, or just finish step 5 (the Vault secrets) before running `db push`.
 
 In **Authentication → URL Configuration**, set the Site URL to your dashboard URL and add `https://<your-domain>/**`
@@ -98,12 +98,16 @@ supabase functions deploy inbound-email --no-verify-jwt
 supabase functions deploy process-upload
 supabase functions deploy ingest-page --no-verify-jwt
 supabase functions deploy categorize-items
+supabase functions deploy mcp --no-verify-jwt
 ```
 
 (`supabase functions deploy` with no name deploys all of them using the settings in `supabase/config.toml`.)
 
-The `--no-verify-jwt` functions are called by Google, Postmark or pg_cron. They verify callers themselves
-with an HMAC-signed OAuth state, a shared secret, or the user's JWT checked in code.
+The `--no-verify-jwt` functions are called by Google, Postmark, pg_cron, the extension or Claude. They verify callers themselves
+with an HMAC-signed OAuth state, a shared secret, a hashed connection code / OAuth token, or the user's JWT checked in code.
+
+`APP_URL` must be the real app domain (e.g. `https://recatch.vercel.app`). The Claude connector's OAuth issuer and
+resource URLs are built from it.
 
 ### 5. Schedule the sync (pg_cron)
 
@@ -114,7 +118,7 @@ select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
 select vault.create_secret('<same CRON_SECRET as the function env>', 'cron_secret');
 ```
 
-Then apply `20261007040000_cron_sync.sql` (`supabase db push`, or paste it into the SQL editor).
+Then apply `20261008000000_cron_sync.sql` (`supabase db push`, or paste it into the SQL editor).
 
 ### 6. Dashboard
 
@@ -133,6 +137,7 @@ SPA rewrites are already included (`vercel.json`, `public/_redirects`). Remember
 ```bash
 cd web && npm run build                       # typecheck + production build
 deno test supabase/functions/_shared          # validation rules, HTML→text, signed OAuth state
+deno test --allow-env --allow-net supabase/functions/mcp   # OAuth + MCP end-to-end against a mock database
 deno check supabase/functions/*/index.ts      # typecheck the edge functions
 ```
 
@@ -164,6 +169,26 @@ deno check supabase/functions/*/index.ts      # typecheck the edge functions
 - **Reports → Inventory & COGS**: units, spend, average and latest landed cost per Woo SKU, and unmapped inventory items.
 - **Reports → Export**: QuickBooks Online bank upload, QuickBooks itemized expenses, Xero bank statement and Xero bills CSVs,
   with an account mapping per tax line and personal items left out by default. Check the columns against your import screen the first time.
+
+## Browser extension
+
+`extension/` is a Manifest V3 Chrome extension that bulk-imports Walmart, Target and Amazon order history from the
+user's own signed-in browser. `./extension/build.sh` zips it to `extension/dist/` and copies the zip to
+`web/public/receipt-catcher-extension.zip`, which Settings offers as a download (Load unpacked) until it's in the store.
+To publish, follow `extension/STORE_LISTING.md` (listing text, permission justifications, screenshots in `extension/store/`,
+privacy policy at `/privacy`), then set `VITE_EXTENSION_STORE_URL` and `VITE_CONTACT_EMAIL` in Vercel.
+
+## Claude connector (MCP)
+
+The `mcp` function is a remote MCP server with its own OAuth 2.1 (dynamic client registration, PKCE, rotating refresh
+tokens, all stored hashed). Users add it in Claude under **Settings → Connectors → Add custom connector** with
+`https://<your-app-domain>/mcp`, then approve on the app's `/oauth/authorize` screen. Tools: `add_receipt`,
+`check_imported`, `search_receipts`, `get_receipt`, `spending_summary`, `inventory_costs`, `update_line_item`.
+
+- OAuth discovery must live at the domain root, so `web/vercel.json` (and `public/_redirects`) proxy `/mcp`,
+  `/.well-known/oauth-*` and `/oauth/register|token` to the function. **They hardcode the Supabase project ref**; change it if you fork.
+- With Claude in Chrome, Claude can open order pages and call `add_receipt` — the same dedupe key as the extension, so nothing is imported twice.
+- Settings → Claude lists connected apps; Disconnect revokes their tokens.
 
 ## Getting in-store receipts by email
 

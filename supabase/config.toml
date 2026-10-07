@@ -30,3 +30,7 @@ verify_jwt = false
 
 [functions.categorize-items]
 verify_jwt = true
+
+# Claude connector (MCP + OAuth). Authenticates with its own OAuth tokens.
+[functions.mcp]
+verify_jwt = false
