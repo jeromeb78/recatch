@@ -1,0 +1,25 @@
+# Minimal config for `supabase link` / `supabase functions deploy`.
+project_id = "receipt-catcher"
+
+[api]
+schemas = ["public", "storage"]
+
+[auth]
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+
+[auth.email]
+enable_signup = true
+
+# Called by Google, Postmark and pg_cron; they authenticate in code.
+[functions.gmail-oauth]
+verify_jwt = false
+
+[functions.gmail-sync]
+verify_jwt = false
+
+[functions.inbound-email]
+verify_jwt = false
+
+[functions.process-upload]
+verify_jwt = true
