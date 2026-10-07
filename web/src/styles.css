@@ -441,3 +441,19 @@ table.data td.mono { white-space: nowrap; }
   table.data td .clip { max-width: 150px; }
   table.data { font-size: 13px; }
 }
+
+/* ---------- Install / Claude / consent / privacy ---------- */
+.install { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; }
+.install .btn { align-self: flex-start; }
+.install ol, .steps-plain { margin: 6px 0 0; padding-left: 1.2rem; display: grid; gap: 4px; }
+.install code, .steps-plain code { font-family: "Geist Mono", monospace; font-size: 12px; }
+details summary { cursor: pointer; color: var(--accent); margin-top: 6px; }
+.prompt-text { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 8px 0; white-space: pre-wrap; }
+.consent h1 { font-size: 22px; }
+.access-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 14px; }
+.access-list li { display: flex; gap: 8px; align-items: flex-start; }
+.access-list svg { color: var(--ok); flex-shrink: 0; margin-top: 2px; }
+main.doc { max-width: 720px; padding: 24px 0 48px; line-height: 1.6; }
+main.doc h1 { font-size: 28px; margin-bottom: 4px; }
+main.doc h2 { font-size: 17px; margin: 24px 0 8px; }
+main.doc li { margin-bottom: 6px; }

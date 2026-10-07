@@ -1,20 +1,12 @@
 // Receives order / receipt pages from the Receipt Catcher browser extension.
 // Auth: `Authorization: Bearer rc_…` (a connection code created in Settings).
 // Body: { store, url, title?, text } or { ping: true }.
-import { ingest } from "../_shared/ingest.ts";
+import { ingest, pageMessageId } from "../_shared/ingest.ts";
 import { corsHeaders, json, userFromApiToken } from "../_shared/utils.ts";
 
 const STORES = new Set(["walmart", "target", "amazon", "other"]);
 const MIN_TEXT = 150;
 const MAX_TEXT = 400_000;
-
-/** Stable per-order key so re-imports of the same page are skipped. */
-function orderKey(url: URL): string {
-  const id = url.searchParams.get("orderID") ?? url.searchParams.get("orderId");
-  if (id) return id;
-  const parts = url.pathname.split("/").filter(Boolean);
-  return parts.slice(-2).join("/") || url.pathname;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -42,7 +34,7 @@ Deno.serve(async (req) => {
     const result = await ingest({
       userId,
       source: "extension",
-      messageId: `ext:${url.hostname}:${orderKey(url)}`,
+      messageId: pageMessageId(url),
       subject: typeof body?.title === "string" ? body.title.slice(0, 300) : undefined,
       from: url.hostname,
       text: text.slice(0, MAX_TEXT),

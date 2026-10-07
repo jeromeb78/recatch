@@ -9,7 +9,7 @@ export interface RawFile {
 
 export interface IngestInput {
   userId: string;
-  source: "gmail" | "forward" | "upload" | "extension";
+  source: "gmail" | "forward" | "upload" | "extension" | "claude";
   /** Dedupe key: Gmail message id, Postmark MessageID, or upload path. */
   messageId?: string;
   connectionId?: string;
@@ -37,6 +37,13 @@ export type IngestOutcome =
 
 const BUCKET = "receipts";
 const NON_RECEIPT_TYPES = new Set(["shipping_notice", "other"]);
+
+/** Stable id for a store order page, shared by the browser extension and the Claude connector. */
+export function pageMessageId(url: URL): string {
+  const id = url.searchParams.get("orderID") ?? url.searchParams.get("orderId");
+  const key = id ?? (url.pathname.split("/").filter(Boolean).slice(-2).join("/") || url.pathname);
+  return `ext:${url.hostname}:${key}`;
+}
 
 export function merchantKey(merchant: string | null): string | null {
   const k = (merchant ?? "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();

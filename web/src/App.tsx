@@ -14,6 +14,8 @@ import Review from "./pages/Review";
 import Reports from "./pages/Reports";
 import Add from "./pages/Add";
 import Settings from "./pages/Settings";
+import OAuthConsent from "./pages/OAuthConsent";
+import Privacy from "./pages/Privacy";
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
@@ -30,11 +32,13 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, [navigate]);
 
+  if (pathname === "/privacy") return <Privacy />;
   if (session === undefined) return <div className="center muted">Loading…</div>;
   if (!session) {
     return <Auth initialMode={pathname === "/signup" ? "signup" : pathname === "/reset-password" ? "forgot" : "signin"} />;
   }
   if (pathname === "/reset-password") return <ResetPassword />;
+  if (pathname === "/oauth/authorize") return <OAuthConsent email={session.user.email ?? ""} />;
   return <Shell userId={session.user.id} email={session.user.email ?? ""} />;
 }
 
