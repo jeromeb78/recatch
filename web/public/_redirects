@@ -1,5 +1,6 @@
 # Claude connector (MCP + OAuth) is served by the Supabase "mcp" function from this domain.
 /mcp                                       https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp                                          200
+/mcp/*                                     https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/:splat                                   200
 /.well-known/oauth-protected-resource*     https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-protected-resource     200
 /.well-known/oauth-authorization-server*   https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-authorization-server   200
 /.well-known/openid-configuration          https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/openid-configuration         200
