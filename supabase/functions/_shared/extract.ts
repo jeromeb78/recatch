@@ -12,12 +12,12 @@ export type DocumentType =
 
 export interface ExtractedLineItem {
   description: string;
-  store_sku: string | null;
-  quantity: number | null;
+  store_sku: string;
+  quantity: number;
   unit_price: number | null;
   total: number | null;
-  suggested_category: string | null;
-  pack_size: number | null;
+  suggested_category: string;
+  pack_size: number;
   tax_line: string;
   use_type: "business" | "personal" | "mixed";
   tax_confidence: number;
@@ -27,7 +27,7 @@ export interface Extraction {
   is_receipt: boolean;
   document_type: DocumentType;
   merchant: string | null;
-  merchant_domain: string | null;
+  merchant_domain: string;
   order_number: string | null;
   purchase_date: string | null;
   currency: string | null;
@@ -40,7 +40,7 @@ export interface Extraction {
   suggested_category: string | null;
   line_items: ExtractedLineItem[];
   confidence: number;
-  notes: string | null;
+  notes: string;
 }
 
 export interface ExtractInput {
@@ -61,7 +61,9 @@ const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp
 
 const nullable = (type: string) => ({ type: [type, "null"] });
 
-const SCHEMA = {
+// Anthropic structured outputs allow at most 16 nullable/union-typed fields per schema, so fields that
+// are often empty use "" (strings) or 1 (counts) instead of null. ingest.ts turns "" back into null.
+export const SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -79,7 +81,7 @@ const SCHEMA = {
       enum: ["receipt", "order_confirmation", "invoice", "refund", "shipping_notice", "other"],
     },
     merchant: { ...nullable("string"), description: "Store name as customers know it, e.g. 'Walmart', 'Target', 'Amazon'." },
-    merchant_domain: { ...nullable("string"), description: "e.g. walmart.com" },
+    merchant_domain: { type: "string", description: "e.g. walmart.com, or \"\" if unknown." },
     order_number: { ...nullable("string"), description: "Order / transaction / receipt number exactly as printed." },
     purchase_date: { ...nullable("string"), description: "Date of purchase or order, YYYY-MM-DD." },
     currency: { ...nullable("string"), description: "ISO 4217 code, e.g. USD." },
@@ -104,14 +106,14 @@ const SCHEMA = {
         ],
         properties: {
           description: { type: "string" },
-          store_sku: { ...nullable("string"), description: "Store item number / UPC / ASIN / DPCI if shown." },
-          quantity: nullable("number"),
+          store_sku: { type: "string", description: "Store item number / UPC / ASIN / DPCI if shown, else \"\"." },
+          quantity: { type: "number", description: "1 if not shown." },
           unit_price: nullable("number"),
           total: { ...nullable("number"), description: "Line total after quantity, before order-level tax." },
-          suggested_category: nullable("string"),
+          suggested_category: { type: "string", description: "One of the user's category names, or \"\"." },
           pack_size: {
-            ...nullable("integer"),
-            description: "Units inside ONE purchased item, e.g. 24 for a 24-count case, 5 for a 5-pack. 1 or null if single.",
+            type: "integer",
+            description: "Units inside ONE purchased item, e.g. 24 for a 24-count case, 5 for a 5-pack. 1 if single.",
           },
           tax_line: { type: "string", enum: TAX_LINE_CODES },
           use_type: { type: "string", enum: [...USE_TYPES] },
@@ -120,7 +122,7 @@ const SCHEMA = {
       },
     },
     confidence: { type: "number", description: "0 to 1: how sure you are the numbers are read correctly." },
-    notes: { ...nullable("string"), description: "Anything a human should double-check." },
+    notes: { type: "string", description: "Anything a human should double-check, or \"\"." },
   },
 } as const;
 
@@ -133,7 +135,7 @@ Rules:
 - Copy order numbers exactly. Use YYYY-MM-DD for dates; if the year is missing, infer it from the email date.
 - One line item per distinct product line. Include quantity and unit price when shown. Do not include tax, shipping, or subtotal rows as line items.
 - Never output full card numbers, only the brand and last four digits.
-- suggested_category must be exactly one of the user's category names provided, or null if none fits.
+- suggested_category must be exactly one of the user's category names provided, or null ("" for line items) if none fits.
 - Lower confidence when the image is blurry, text is cut off, or totals are ambiguous, and say why in notes.
 
 ${TAX_GUIDANCE}`;

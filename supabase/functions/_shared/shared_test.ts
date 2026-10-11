@@ -1,11 +1,11 @@
 // deno test supabase/functions/_shared
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { merchantKey, reviewReasons } from "./ingest.ts";
-import type { Extraction } from "./extract.ts";
+import { type Extraction, SCHEMA } from "./extract.ts";
 import { base64ToBytes, bytesToBase64, htmlToText, signPayload, verifyPayload } from "./utils.ts";
 
 const item = {
-  description: "", store_sku: null, quantity: 1, unit_price: null, total: null, suggested_category: null,
+  description: "", store_sku: "", quantity: 1, unit_price: null, total: null, suggested_category: "",
   pack_size: 1, tax_line: "c22", use_type: "business" as const, tax_confidence: 0.9,
 };
 
@@ -17,7 +17,7 @@ const base: Extraction = {
     { ...item, description: "A", quantity: 2, unit_price: 2.5, total: null },
     { ...item, description: "B", quantity: 1, unit_price: null, total: 5 },
   ],
-  confidence: 0.95, notes: null,
+  confidence: 0.95, notes: "",
 };
 
 Deno.test("clean receipt has no review reasons", () => {
@@ -56,4 +56,16 @@ Deno.test("base64 round-trip incl. base64url", () => {
   const bytes = new Uint8Array([251, 255, 0, 1, 2]);
   assertEquals(base64ToBytes(bytesToBase64(bytes)), bytes);
   assertEquals(base64ToBytes("-_8"), new Uint8Array([251, 255]));
+});
+
+Deno.test("extraction schema stays within the API's 16 nullable-field limit", () => {
+  let unions = 0;
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    const n = node as Record<string, unknown>;
+    if (Array.isArray(n.type) || Array.isArray(n.anyOf)) unions++;
+    Object.values(n).forEach(walk);
+  };
+  walk(SCHEMA);
+  assert(unions <= 16, `${unions} nullable/union fields`);
 });
