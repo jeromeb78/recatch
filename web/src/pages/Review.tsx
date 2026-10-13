@@ -64,7 +64,7 @@ export default function Review() {
     setItems(li);
     const image = (r.files ?? []).find((f) => f.mime.startsWith("image/"));
     if (image) {
-      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(image.path, 3600);
+      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(image.path, 300);
       setThumb(signed?.signedUrl ?? null);
     }
     const found = await Promise.all(li.filter((i) => !i.woo_sku).map(async (i) => [i.id, await suggestSku(i)] as const));

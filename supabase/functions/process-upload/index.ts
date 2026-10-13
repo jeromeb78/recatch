@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
 
   try {
     const { path, account } = await req.json();
-    const owner = await accountFor(user.id, account, "receipts", "edit");
+    const owner = await accountFor(user, account, "receipts", "edit");
     if (!owner) return json({ error: "You don't have permission to add receipts to this account" }, 403);
     if (typeof path !== "string" || !path.startsWith(`${owner}/`) || path.includes("..")) {
       return json({ error: "Invalid path" }, 400);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { useConfirmIdentity } from "../components/ConfirmIdentity";
 import { CheckIcon } from "../components/Icons";
 
 const FN = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mcp`;
@@ -13,6 +14,7 @@ const ACCESS = [
 
 /** /oauth/authorize — Claude (or another MCP client) sends the user here to grant access. */
 export default function OAuthConsent({ email }: { email: string }) {
+  const confirmIdentity = useConfirmIdentity();
   const params = new URLSearchParams(window.location.search);
   const clientId = params.get("client_id") ?? "";
   const redirectUri = params.get("redirect_uri") ?? "";
@@ -37,6 +39,7 @@ export default function OAuthConsent({ email }: { email: string }) {
   }, []);
 
   async function decide(decision: "allow" | "deny") {
+    if (decision === "allow" && !(await confirmIdentity("Claude will be able to read your receipts and add new ones."))) return;
     setBusy(true);
     const { data: { session } } = await supabase.auth.getSession();
     const res = await fetch(`${FN}/oauth/approve`, {

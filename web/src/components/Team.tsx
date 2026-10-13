@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { date } from "../lib/format";
+import { useConfirmIdentity } from "./ConfirmIdentity";
 import {
   AREAS, describePerms, LEVEL_LABEL, presetFor, PRESETS, useAccount, type Area, type Level, type Perms,
 } from "../lib/account";
@@ -61,6 +62,22 @@ export function TeamSection({ userId }: { userId: string }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [requireMfa, setRequireMfa] = useState(false);
+  const confirmIdentity = useConfirmIdentity();
+
+  useEffect(() => {
+    if (!isOwner) return;
+    supabase.from("profiles").select("require_team_mfa").eq("user_id", owner).maybeSingle()
+      .then(({ data }) => setRequireMfa(!!data?.require_team_mfa));
+  }, [isOwner, owner]);
+
+  async function toggleRequireMfa(on: boolean) {
+    if (on && !confirm("Everyone on your team will need two-step sign-in. Anyone who hasn't set it up loses access until they do. Continue?")) return;
+    if (!on && !(await confirmIdentity("Team members will be able to open your receipts with just their password."))) return;
+    const { error } = await supabase.from("profiles").update({ require_team_mfa: on }).eq("user_id", owner);
+    if (error) return setMsg({ kind: "error", text: error.message });
+    setRequireMfa(on);
+  }
 
   const load = useCallback(async () => {
     const [m, i] = await Promise.all([
@@ -77,6 +94,7 @@ export function TeamSection({ userId }: { userId: string }) {
 
   async function invite(e: FormEvent) {
     e.preventDefault();
+    if (perms.team === "edit" && !(await confirmIdentity(`${email.trim()} will be able to invite people and change everyone's access.`))) return;
     setBusy(true);
     setMsg(null);
     setLink(null);
@@ -89,6 +107,7 @@ export function TeamSection({ userId }: { userId: string }) {
   }
 
   async function saveMember(m: Member) {
+    if (draft.team === "edit" && m.permissions.team !== "edit" && !(await confirmIdentity(`${m.member_email} will be able to invite people and change everyone's access.`))) return;
     setBusy(true);
     const { error } = await supabase.from("account_members").update({ permissions: draft }).eq("owner_id", owner).eq("member_id", m.member_id);
     setBusy(false);
@@ -175,6 +194,13 @@ export function TeamSection({ userId }: { userId: string }) {
           </li>
         ))}
       </ul>
+
+      {isOwner && (
+        <label className="inline require-mfa">
+          <input type="checkbox" checked={requireMfa} onChange={(e) => toggleRequireMfa(e.target.checked)} />
+          <span>Require two-step sign-in for everyone on this team <span className="muted small">— recommended when people can see your receipts</span></span>
+        </label>
+      )}
 
       {msg && <p className={msg.kind === "ok" ? "ok small" : "error small"} role="status">{msg.text}</p>}
 

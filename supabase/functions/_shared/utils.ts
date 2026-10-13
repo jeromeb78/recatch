@@ -27,32 +27,60 @@ export function adminClient(): SupabaseClient {
   return admin;
 }
 
-/** Resolves the caller from `Authorization: Bearer <user JWT>`, or null. */
-export async function userFromRequest(req: Request): Promise<{ id: string; email?: string } | null> {
+export interface Caller {
+  id: string;
+  email?: string;
+  /** Authenticator assurance level of this session: "aal2" once the two-step code was entered. */
+  aal: string;
+}
+
+/** The `aal` claim of a Supabase access token (signature already checked by auth.getUser). */
+export function tokenAal(jwt: string): string {
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(base64ToBytes(jwt.split(".")[1] ?? "")));
+    return typeof payload.aal === "string" ? payload.aal : "aal1";
+  } catch {
+    return "aal1";
+  }
+}
+
+/**
+ * Resolves the caller from `Authorization: Bearer <user JWT>`, or null. People who turned on two-step
+ * sign-in are only accepted from a session that passed it, same as row-level security.
+ */
+export async function userFromRequest(req: Request): Promise<Caller | null> {
   const auth = req.headers.get("Authorization") ?? "";
   const token = auth.replace(/^Bearer\s+/i, "");
   if (!token) return null;
   const { data, error } = await adminClient().auth.getUser(token);
   if (error || !data.user) return null;
-  return { id: data.user.id, email: data.user.email ?? undefined };
+  const aal = tokenAal(token);
+  const hasSecondStep = (data.user.factors ?? []).some((f) => f.status === "verified");
+  if (hasSecondStep && aal !== "aal2") return null;
+  return { id: data.user.id, email: data.user.email ?? undefined, aal };
 }
 
 const LEVEL_RANK: Record<string, number> = { none: 0, view: 1, edit: 2 };
 
 /**
  * The account a request acts on: the caller's own, or an account they were invited to with at least
- * `level` access to `area` (see account_members). Returns null when they lack that access.
+ * `level` access to `area` (see account_members). Returns null when they lack that access, including
+ * when the owner requires two-step sign-in and this session didn't pass it.
  */
 export async function accountFor(
-  userId: string,
+  caller: Caller,
   account: unknown,
   area: "receipts" | "reports" | "settings" | "team",
   level: "view" | "edit",
 ): Promise<string | null> {
-  if (account == null || account === "" || account === userId) return userId;
+  if (account == null || account === "" || account === caller.id) return caller.id;
   if (typeof account !== "string") return null;
-  const { data } = await adminClient().from("account_members").select("permissions")
-    .eq("owner_id", account).eq("member_id", userId).maybeSingle();
+  const db = adminClient();
+  const [{ data }, { data: owner }] = await Promise.all([
+    db.from("account_members").select("permissions").eq("owner_id", account).eq("member_id", caller.id).maybeSingle(),
+    db.from("profiles").select("require_team_mfa").eq("user_id", account).maybeSingle(),
+  ]);
+  if (owner?.require_team_mfa && caller.aal !== "aal2") return null;
   const have = (data?.permissions as Record<string, string> | undefined)?.[area] ?? "none";
   return (LEVEL_RANK[have] ?? 0) >= LEVEL_RANK[level] ? account : null;
 }

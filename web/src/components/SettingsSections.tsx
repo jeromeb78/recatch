@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { relative } from "../lib/format";
+import { useConfirmIdentity } from "./ConfirmIdentity";
 
 /* ---------------- Business profile ---------------- */
 
@@ -54,6 +55,7 @@ export function ExtensionSection({ userId, compact = false }: { userId: string; 
   const [code, setCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const confirmIdentity = useConfirmIdentity();
 
   const load = useCallback(async () => {
     const { data } = await supabase.from("api_tokens").select("id, name, created_at, last_used_at, revoked_at")
@@ -64,6 +66,7 @@ export function ExtensionSection({ userId, compact = false }: { userId: string; 
 
   async function create() {
     setError(null);
+    if (!(await confirmIdentity("A connection code lets the browser extension add receipts to your account."))) return;
     const token = randomToken();
     const { error } = await supabase.from("api_tokens").insert({
       user_id: userId,
@@ -131,6 +134,7 @@ export function AccountSection({ email }: { email: string }) {
   const [password, setPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const confirmIdentity = useConfirmIdentity();
 
   async function changePassword(e: FormEvent) {
     e.preventDefault();
@@ -142,6 +146,7 @@ export function AccountSection({ email }: { email: string }) {
 
   async function changeEmail(e: FormEvent) {
     e.preventDefault();
+    if (!(await confirmIdentity(`Your sign-in email will change to ${newEmail.trim()}.`))) return;
     const { error } = await supabase.auth.updateUser(
       { email: newEmail.trim() },
       { emailRedirectTo: `${window.location.origin}/settings` },

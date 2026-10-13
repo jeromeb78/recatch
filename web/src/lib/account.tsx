@@ -39,6 +39,8 @@ type Ctx = {
   can: (area: Area, level?: Exclude<Level, "none">) => boolean;
   switchTo: (ownerId: string) => void;
   reload: () => Promise<void>;
+  /** The owner of this shared account requires two-step sign-in and this session hasn't used it. */
+  needsTwoStep: boolean;
 };
 
 const AccountContext = createContext<Ctx | null>(null);
@@ -70,6 +72,16 @@ export function AccountProvider({ userId, email, children }: { userId: string; e
     reload();
   }, [reload]);
 
+  const [needsTwoStep, setNeedsTwoStep] = useState(false);
+  const activeId = accounts ? (accounts.find((a) => a.ownerId === active) ?? accounts[0]).ownerId : null;
+  useEffect(() => {
+    if (!activeId || activeId === userId) return setNeedsTwoStep(false);
+    Promise.all([
+      supabase.rpc("team_requires_mfa", { p_owner: activeId }),
+      supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
+    ]).then(([req, aal]) => setNeedsTwoStep(!!req.data && aal.data?.currentLevel !== "aal2"));
+  }, [activeId, userId]);
+
   if (!accounts) return <div className="center muted">Loading…</div>;
 
   // Fall back to their own account if access to the remembered one was removed.
@@ -87,6 +99,7 @@ export function AccountProvider({ userId, email, children }: { userId: string; e
       window.location.assign("/");
     },
     reload,
+    needsTwoStep,
   };
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
 }

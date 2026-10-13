@@ -260,8 +260,20 @@ remove team management, and nobody can change their own access. `process-upload`
 
 ## Security notes
 
-- Gmail refresh tokens live in `email_connections`. Browser clients can't select the `refresh_token` column; only the service role reads it.
-- Every table has RLS limited to `auth.uid()`. Storage objects live under `{user_id}/…` with matching policies.
+- **Row-level security everywhere.** Every table and the receipt-files bucket check `can_access(owner, area, level)`,
+  so people only see their own account or what an owner shared with them (see Team access).
+- **Two-step sign-in (TOTP).** Settings → Two-step sign-in. Once on, the database (restrictive `two-step sign-in`
+  policies) and every edge function refuse sessions that skipped the code — a stolen password alone opens nothing,
+  including the Claude connector consent and extension codes. Owners can require it for their whole team.
+- **Confirm it's you.** Changing email, connecting Gmail or Claude, making an extension code, giving someone team
+  management and turning off two-step sign-in ask for the 6-digit code (or password) again. This is a client-side
+  guard against a computer left signed in; the server-side protections above don't depend on it.
+- **Gmail refresh tokens live in Supabase Vault**, encrypted with a key kept outside the database. Only the
+  service role can read them (`gmail_token_get`); disconnecting deletes the secret.
+- **Short-lived file links.** Receipt photos/PDFs are private; the app signs 5-minute links and renews them while a
+  receipt is open.
+- **Security headers** (`vercel.json`, `public/_headers`): a strict Content-Security-Policy (scripts only from this
+  site, data only to Supabase), no framing, HSTS, nosniff, a strict referrer policy and a locked-down permissions policy.
+  If you move Supabase projects, update the project URL in the CSP.
+- Extension codes, Claude connector tokens and invite links are random tokens stored only as SHA-256 hashes.
 - Extraction never stores full card numbers; the model is told to keep only "Visa ending 1234".
-- Consider encrypting `refresh_token` with pgsodium/Vault if you open this up beyond your household.
-- Extension connection codes are random 256-bit tokens; only their SHA-256 hash is stored (`api_tokens`). Revoke them in Settings.

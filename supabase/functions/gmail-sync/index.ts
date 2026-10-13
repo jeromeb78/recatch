@@ -14,7 +14,6 @@ interface Connection {
   id: string;
   user_id: string;
   email: string;
-  refresh_token: string;
   sync_from: string;
 }
 
@@ -65,7 +64,10 @@ async function syncConnection(conn: Connection, deadline: number): Promise<Conne
 
   let token: string;
   try {
-    token = await refreshAccessToken(conn.refresh_token);
+    const { data: refreshToken, error } = await db.rpc("gmail_token_get", { p_connection: conn.id });
+    if (error) throw new Error(`Couldn't read the Gmail token: ${error.message}`);
+    if (!refreshToken) throw new GmailAuthError("Gmail access is missing. Reconnect Gmail in Settings.");
+    token = await refreshAccessToken(refreshToken as string);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await db.from("email_connections")
@@ -136,7 +138,7 @@ Deno.serve(async (req) => {
   try {
     const cronSecret = req.headers.get("x-cron-secret");
     let query = db.from("email_connections")
-      .select("id, user_id, email, refresh_token, sync_from")
+      .select("id, user_id, email, sync_from")
       .eq("provider", "gmail")
       .neq("status", "revoked");
 

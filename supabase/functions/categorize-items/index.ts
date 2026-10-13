@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const owner = await accountFor(caller.id, body?.account, "reports", "edit");
+    const owner = await accountFor(caller, body?.account, "reports", "edit");
     if (!owner) return json({ error: "You don't have permission to edit tax categories in this account" }, 403);
     const user = { id: owner };
     const limit = Math.min(Math.max(Number(body?.limit) || 100, 1), 200);
