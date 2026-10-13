@@ -2,7 +2,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import { merchantKey, reviewReasons } from "./ingest.ts";
 import { type Extraction, SCHEMA } from "./extract.ts";
-import { base64ToBytes, bytesToBase64, htmlToText, signPayload, verifyPayload } from "./utils.ts";
+import { base64ToBytes, base64UrlEncode, bytesToBase64, htmlToText, signPayload, tokenAal, verifyPayload } from "./utils.ts";
 
 const item = {
   description: "", store_sku: "", quantity: 1, unit_price: null, total: null, suggested_category: "",
@@ -68,4 +68,12 @@ Deno.test("extraction schema stays within the API's 16 nullable-field limit", ()
   };
   walk(SCHEMA);
   assert(unions <= 16, `${unions} nullable/union fields`);
+});
+
+Deno.test("tokenAal reads the session's assurance level", () => {
+  const jwt = (claims: Record<string, unknown>) =>
+    `x.${base64UrlEncode(new TextEncoder().encode(JSON.stringify(claims)))}.sig`;
+  assertEquals(tokenAal(jwt({ sub: "u", aal: "aal2" })), "aal2");
+  assertEquals(tokenAal(jwt({ sub: "u" })), "aal1");
+  assertEquals(tokenAal("garbage"), "aal1");
 });

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { useReviewCount } from "./lib/useReviewCount";
@@ -17,6 +17,9 @@ import Settings from "./pages/Settings";
 import OAuthConsent from "./pages/OAuthConsent";
 import Privacy from "./pages/Privacy";
 import Invite from "./pages/Invite";
+import MfaChallenge from "./pages/MfaChallenge";
+import { ConfirmIdentityProvider } from "./components/ConfirmIdentity";
+import { needsSecondStep } from "./lib/mfa";
 import { AccountProvider, PENDING_INVITE_KEY, useAccount, type Area } from "./lib/account";
 
 function hasPendingInvite(): boolean {
@@ -29,6 +32,8 @@ function hasPendingInvite(): boolean {
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  // Whether this session still has to enter the two-step code (undefined while checking).
+  const [secondStep, setSecondStep] = useState<boolean | undefined>(undefined);
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -42,8 +47,16 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, [navigate]);
 
+  const token = session?.access_token;
+  const recheckSecondStep = useCallback(() => {
+    if (!token) return setSecondStep(false);
+    needsSecondStep().then(setSecondStep);
+  }, [token]);
+  useEffect(() => { recheckSecondStep(); }, [recheckSecondStep]);
+
   if (pathname === "/privacy") return <Privacy />;
-  if (session === undefined) return <div className="center muted">Loading…</div>;
+  if (session === undefined || (session && secondStep === undefined)) return <div className="center muted">Loading…</div>;
+  if (session && secondStep) return <MfaChallenge email={session.user.email ?? ""} onDone={recheckSecondStep} />;
   // An invite link, or coming back from sign-up / sign-in with one still waiting to be accepted.
   if (pathname === "/invite" || (session && hasPendingInvite() && pathname !== "/reset-password" && pathname !== "/oauth/authorize")) {
     return <Invite userId={session?.user.id} email={session?.user.email ?? undefined} />;
@@ -52,11 +65,16 @@ export default function App() {
     return <Auth initialMode={pathname === "/signup" ? "signup" : pathname === "/reset-password" ? "forgot" : "signin"} />;
   }
   if (pathname === "/reset-password") return <ResetPassword />;
-  if (pathname === "/oauth/authorize") return <OAuthConsent email={session.user.email ?? ""} />;
+  const email = session.user.email ?? "";
+  if (pathname === "/oauth/authorize") {
+    return <ConfirmIdentityProvider email={email}><OAuthConsent email={email} /></ConfirmIdentityProvider>;
+  }
   return (
-    <AccountProvider userId={session.user.id} email={session.user.email ?? ""}>
-      <Shell userId={session.user.id} email={session.user.email ?? ""} />
-    </AccountProvider>
+    <ConfirmIdentityProvider email={email}>
+      <AccountProvider userId={session.user.id} email={email}>
+        <Shell userId={session.user.id} email={email} />
+      </AccountProvider>
+    </ConfirmIdentityProvider>
   );
 }
 
@@ -86,7 +104,7 @@ function AccountBar() {
 }
 
 function Shell({ userId, email }: { userId: string; email: string }) {
-  const { account, can } = useAccount();
+  const { account, can, needsTwoStep } = useAccount();
   const reviewCount = useReviewCount(can("receipts", "edit"));
   const navigate = useNavigate();
   const location = useLocation();
@@ -118,6 +136,12 @@ function Shell({ userId, email }: { userId: string; email: string }) {
 
       <main>
         {notice && <p className="banner ok" role="status">{notice}</p>}
+        {needsTwoStep && location.pathname !== "/settings" && (
+          <div className="banner warn" role="alert">
+            <b>{account.ownerEmail} requires two-step sign-in.</b> Their receipts stay hidden until you turn it on.{" "}
+            <Link to="/settings#two-step">Set it up in Settings</Link>
+          </div>
+        )}
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/welcome" element={<Welcome userId={userId} />} />

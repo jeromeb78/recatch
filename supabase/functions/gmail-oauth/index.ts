@@ -61,18 +61,15 @@ Deno.serve(async (req) => {
       if (!tokens.refresh_token) return backToApp({ gmail: "error", reason: "no_refresh_token" }, state.r);
       const email = await userEmail(tokens.access_token);
 
-      const { error } = await adminClient().from("email_connections").upsert(
-        {
-          user_id: state.uid,
-          provider: "gmail",
-          email,
-          refresh_token: tokens.refresh_token,
-          status: "active",
-          last_error: null,
-        },
+      const db = adminClient();
+      const { data: conn, error } = await db.from("email_connections").upsert(
+        { user_id: state.uid, provider: "gmail", email, status: "active", last_error: null },
         { onConflict: "user_id,provider,email" },
-      );
+      ).select("id").single();
       if (error) throw error;
+      // The refresh token is kept encrypted in Vault, never in the table itself.
+      const { error: tokenError } = await db.rpc("gmail_token_set", { p_connection: conn.id, p_token: tokens.refresh_token });
+      if (tokenError) throw tokenError;
       return backToApp({ gmail: "connected", email }, state.r);
     }
 

@@ -539,3 +539,14 @@ fieldset.plain:disabled select, fieldset.plain:disabled input { opacity: 0.75; }
 .perm-list { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 4px; }
 .invite-card { display: flex; flex-direction: column; gap: 8px; }
 .invite-card h2 { margin: 0; }
+
+/* ---------- two-step sign-in & confirm ---------- */
+input.otp { font-family: "Geist Mono", monospace; font-size: 22px; letter-spacing: 0.3em; text-align: center; max-width: 220px; }
+.modal-backdrop { position: fixed; inset: 0; background: rgb(15 23 42 / 0.45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+.modal { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 12px; }
+.modal h2 { margin: 0; }
+.qr { background: #fff; border-radius: 12px; padding: 8px; border: 1px solid var(--border); }
+.secret { display: inline-block; margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); font-family: "Geist Mono", monospace; overflow-wrap: anywhere; }
+.enroll-steps { margin: 0; padding-left: 1.2rem; color: var(--muted); }
+.require-mfa { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 12px; font-size: 14px; }
+.require-mfa input { margin-top: 3px; }

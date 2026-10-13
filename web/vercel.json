@@ -1,14 +1,79 @@
 {
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://smncawxfzdkwxepxzhjo.supabase.co; connect-src 'self' https://smncawxfzdkwxepxzhjo.supabase.co wss://smncawxfzdkwxepxzhjo.supabase.co; frame-src https://smncawxfzdkwxepxzhjo.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+        },
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin"
+        }
+      ]
+    }
+  ],
   "rewrites": [
-    { "source": "/mcp", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp" },
-    { "source": "/mcp/:path*", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/:path*" },
-    { "source": "/.well-known/oauth-protected-resource/:path*", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-protected-resource" },
-    { "source": "/.well-known/oauth-protected-resource", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-protected-resource" },
-    { "source": "/.well-known/oauth-authorization-server/:path*", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-authorization-server" },
-    { "source": "/.well-known/oauth-authorization-server", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-authorization-server" },
-    { "source": "/.well-known/openid-configuration", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/openid-configuration" },
-    { "source": "/oauth/register", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/oauth/register" },
-    { "source": "/oauth/token", "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/oauth/token" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/mcp",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp"
+    },
+    {
+      "source": "/mcp/:path*",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/:path*"
+    },
+    {
+      "source": "/.well-known/oauth-protected-resource/:path*",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-protected-resource"
+    },
+    {
+      "source": "/.well-known/oauth-protected-resource",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-protected-resource"
+    },
+    {
+      "source": "/.well-known/oauth-authorization-server/:path*",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-authorization-server"
+    },
+    {
+      "source": "/.well-known/oauth-authorization-server",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/oauth-authorization-server"
+    },
+    {
+      "source": "/.well-known/openid-configuration",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/.well-known/openid-configuration"
+    },
+    {
+      "source": "/oauth/register",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/oauth/register"
+    },
+    {
+      "source": "/oauth/token",
+      "destination": "https://smncawxfzdkwxepxzhjo.supabase.co/functions/v1/mcp/oauth/token"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }

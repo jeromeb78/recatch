@@ -6,6 +6,8 @@ import { date, relative } from "../lib/format";
 import type { Connection } from "../lib/types";
 import { AccountSection, BusinessProfile, ClaudeSection, ExtensionSection } from "../components/SettingsSections";
 import { MembershipSection, TeamSection } from "../components/Team";
+import { TwoStepSection } from "../components/TwoStep";
+import { useConfirmIdentity } from "../components/ConfirmIdentity";
 import { accountId, useAccount } from "../lib/account";
 
 const INBOUND = (import.meta.env.VITE_INBOUND_ADDRESS as string | undefined) ?? "";
@@ -50,12 +52,14 @@ function MemberSettings({ userId, email }: { userId: string; email: string }) {
       {can("settings") && <BusinessProfile userId={account.ownerId} readOnly={!can("settings", "edit")} />}
       {can("settings") && <Categories readOnly={!can("settings", "edit")} />}
       {can("team", "edit") && <TeamSection userId={userId} />}
+      <TwoStepSection />
       <AccountSection email={email} />
     </div>
   );
 }
 
 function OwnerSettings({ userId, email }: { userId: string; email: string }) {
+  const confirmIdentity = useConfirmIdentity();
   const [params, setParams] = useSearchParams();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [token, setToken] = useState<string | null>(null);
@@ -89,6 +93,7 @@ function OwnerSettings({ userId, email }: { userId: string; email: string }) {
   }, [params, setParams]);
 
   async function connectGmail() {
+    if (!(await confirmIdentity("Receipt Catcher will read receipt emails from the Gmail account you pick."))) return;
     setBusy("connect");
     const { data, error } = await supabase.functions.invoke("gmail-oauth", { method: "POST" });
     if (error) {
@@ -194,6 +199,7 @@ function OwnerSettings({ userId, email }: { userId: string; email: string }) {
       <BusinessProfile userId={userId} />
       <Categories />
       <TeamSection userId={userId} />
+      <TwoStepSection />
       <AccountSection email={email} />
     </div>
   );

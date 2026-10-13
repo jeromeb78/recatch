@@ -10,6 +10,8 @@ import { accountId, useAccount } from "../lib/account";
 
 type Draft = Omit<LineItem, "id" | "receipt_id"> & { id?: string };
 
+const FILE_LINK_SECONDS = 300;
+
 const num = (v: string): number | null => (v.trim() === "" ? null : Number(v));
 
 export default function ReceiptDetail() {
@@ -25,6 +27,8 @@ export default function ReceiptDetail() {
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   useEffect(() => {
+    let timer: number | undefined;
+    let cancelled = false;
     (async () => {
       const { data: r, error } = await supabase.from("receipts").select("*").eq("id", id).single();
       if (error) return setMessage({ kind: "error", text: error.message });
@@ -32,11 +36,20 @@ export default function ReceiptDetail() {
       const { data: li } = await supabase.from("line_items").select("*").eq("receipt_id", id).order("position");
       setItems((li ?? []) as LineItem[]);
       const paths = ((r as Receipt).files ?? []).map((f) => f.path);
-      if (paths.length) {
-        const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrls(paths, 3600);
+      if (!paths.length) return;
+      // File links are short-lived so a copied or leaked link stops working within minutes;
+      // renew them while the page stays open.
+      const sign = async () => {
+        const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrls(paths, FILE_LINK_SECONDS);
         setFileUrls(Object.fromEntries((signed ?? []).filter((s) => s.signedUrl && s.path).map((s) => [s.path as string, s.signedUrl as string])));
-      }
+      };
+      await sign();
+      if (!cancelled) timer = window.setInterval(sign, (FILE_LINK_SECONDS - 60) * 1000);
     })();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [id]);
 
   if (!receipt) {
