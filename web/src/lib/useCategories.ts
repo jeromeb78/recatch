@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "./supabase";
+import { accountId } from "./account";
 import type { Category } from "./types";
 
 export function useCategories() {
   const [categories, setCategories] = useState<Category[]>([]);
   const reload = useCallback(async () => {
-    const { data } = await supabase.from("categories").select("id, name, is_business, color").order("name");
+    const { data } = await supabase.from("categories").select("id, name, is_business, color").eq("user_id", accountId()).order("name");
     setCategories((data ?? []) as Category[]);
   }, []);
   useEffect(() => {

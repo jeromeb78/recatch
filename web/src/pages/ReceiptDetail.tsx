@@ -6,6 +6,7 @@ import { money } from "../lib/format";
 import { SOURCE_LABEL } from "../lib/merchant";
 import { TAX_LINES, USE_LABEL } from "../lib/tax";
 import type { LineItem, Receipt } from "../lib/types";
+import { accountId, useAccount } from "../lib/account";
 
 type Draft = Omit<LineItem, "id" | "receipt_id"> & { id?: string };
 
@@ -15,6 +16,7 @@ export default function ReceiptDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { categories } = useCategories();
+  const readOnly = !useAccount().can("receipts", "edit");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [items, setItems] = useState<Draft[]>([]);
   const [removed, setRemoved] = useState<string[]>([]);
@@ -77,11 +79,10 @@ export default function ReceiptDetail() {
         const { error } = await supabase.from("line_items").delete().in("id", removed);
         if (error) throw error;
       }
-      const { data: { user } } = await supabase.auth.getUser();
       const rows = items.map((it, position) => ({
         ...(it.id ? { id: it.id } : {}),
         receipt_id: receipt.id,
-        user_id: user!.id,
+        user_id: accountId(),
         position,
         description: it.description || "(item)",
         store_sku: it.store_sku || null,
@@ -130,7 +131,9 @@ export default function ReceiptDetail() {
   return (
     <div className="detail">
       <p><Link to="/receipts">← All receipts</Link></p>
+      {readOnly && <p className="banner warn">View only — you can't change receipts in this account.</p>}
 
+      <fieldset className="plain" disabled={readOnly}>
       {receipt.status === "needs_review" && (
         <div className="banner warn">
           <strong>Needs review</strong>
@@ -292,14 +295,16 @@ export default function ReceiptDetail() {
         </div>
       </section>
 
-      <div className="actions">
+      </fieldset>
+
+      {!readOnly && <div className="actions">
         <button className="primary" disabled={saving} onClick={() => save(false)}>{saving ? "Saving…" : "Save"}</button>
         {receipt.status === "needs_review" && (
           <button disabled={saving} onClick={() => save(true)}>Save &amp; mark reviewed</button>
         )}
         <div className="spacer" />
         <button className="danger" onClick={remove}>Delete</button>
-      </div>
+      </div>}
       {message && <p className={message.kind === "ok" ? "ok" : "error"}>{message.text}</p>}
     </div>
   );

@@ -8,6 +8,7 @@ import ReceiptRow from "../components/ReceiptRow";
 import { SOURCE_LABEL } from "../lib/merchant";
 import { download, toCsv } from "../lib/csv";
 import type { Receipt } from "../lib/types";
+import { accountId } from "../lib/account";
 
 const PAGE = 1000;
 const COLUMNS =
@@ -40,6 +41,7 @@ async function fetchReceipts(f: Filters): Promise<Receipt[]> {
     let q = supabase
       .from("receipts")
       .select(COLUMNS)
+      .eq("user_id", accountId())
       .order("purchase_date", { ascending: false, nullsFirst: true })
       .order("created_at", { ascending: false })
       .range(offset, offset + PAGE - 1);

@@ -1,7 +1,7 @@
 // Called by the web app after it uploads a photo/PDF to storage at {user_id}/uploads/...
-// Body: { path: string }
+// Body: { path: string, account?: owner id when uploading to an account the caller was invited to }
 import { ingest } from "../_shared/ingest.ts";
-import { adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
+import { accountFor, adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
@@ -13,8 +13,10 @@ Deno.serve(async (req) => {
   if (!user) return json({ error: "Unauthorized" }, 401);
 
   try {
-    const { path } = await req.json();
-    if (typeof path !== "string" || !path.startsWith(`${user.id}/`) || path.includes("..")) {
+    const { path, account } = await req.json();
+    const owner = await accountFor(user.id, account, "receipts", "edit");
+    if (!owner) return json({ error: "You don't have permission to add receipts to this account" }, 403);
+    if (typeof path !== "string" || !path.startsWith(`${owner}/`) || path.includes("..")) {
       return json({ error: "Invalid path" }, 400);
     }
 
@@ -33,7 +35,7 @@ Deno.serve(async (req) => {
     else return json({ error: `Unsupported file type ${mime}. Upload a JPEG, PNG, WebP or PDF.` }, 415);
 
     const result = await ingest({
-      userId: user.id,
+      userId: owner,
       source: "upload",
       messageId: `upload:${path}`,
       pdfs,

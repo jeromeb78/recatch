@@ -9,6 +9,7 @@ import {
   type Opportunity, type Scenario, type SuggestedTrip, type TaxProfile, type Trip, type WLine, type YearInputs,
 } from "../lib/writeoffs";
 import { DownloadIcon } from "../components/Icons";
+import { accountId, useAccount } from "../lib/account";
 
 interface Props {
   year: number;
@@ -26,6 +27,7 @@ const LINE_ORDER = ["cogs", "c8", "c9", "c10", "c13", "c15", "c17", "c18", "c20b
 
 export default function WriteOffs({ year, lines, trips, suggested, profile, saveProfile, reload, openTab, hasBusinessDescription }: Props) {
   const rules = rulesFor(year);
+  const readOnly = !useAccount().can("reports", "edit");
   const inputs: YearInputs = profile.years?.[String(year)] ?? {};
   const scenario: Scenario = inputs.scenario ?? "balanced";
 
@@ -129,7 +131,7 @@ export default function WriteOffs({ year, lines, trips, suggested, profile, save
         )}
       </section>
 
-      <Setup year={year} inputs={inputs} setInputs={setInputs} />
+      <Setup readOnly={readOnly} year={year} inputs={inputs} setInputs={setInputs} />
 
       <Guide year={year} amounts={chosen.lines} />
 
@@ -150,12 +152,15 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const { account, can } = useAccount();
+  const canEdit = can("reports", "edit");
+  const canDescribe = canEdit && can("settings", "edit");
   const byId = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
   const actionable = ops.filter((o) => o.kind !== "info");
   const potential = actionable.reduce((a, o) => a + (o.value ?? 0), 0);
 
   async function invoke(body: Record<string, unknown>) {
-    const { data, error } = await supabase.functions.invoke("categorize-items", { body });
+    const { data, error } = await supabase.functions.invoke("categorize-items", { body: { ...body, account: accountId() } });
     if (error) {
       const b = await (error as { context?: Response }).context?.json?.().catch(() => null);
       throw new Error(b?.error ?? error.message);
@@ -200,8 +205,7 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
   const saveDescription = () => run(async () => {
     const text = description.trim();
     if (!text) throw new Error("Describe what you sell first.");
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("profiles").update({ business_description: text }).eq("user_id", user!.id);
+    const { error } = await supabase.from("profiles").update({ business_description: text }).eq("user_id", accountId());
     if (error) throw new Error(error.message);
     setRunning(false);
     await recheck();
@@ -234,7 +238,10 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
               <div className="op-main">
                 <b>{o.title}</b>
                 <span className="muted small">{o.detail}</span>
-                {o.action?.type === "describe" && (
+                {o.action?.type === "describe" && !canDescribe && (
+                  <span className="small warn-text">Ask {account.ownerEmail} to add a business description in Settings.</span>
+                )}
+                {o.action?.type === "describe" && canDescribe && (
                   <div className="stack-sm describe">
                     <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)}
                       placeholder="e.g. I buy Hot Wheels, Matchbox and other die-cast cars at Walmart and Target and resell them on my WooCommerce store. I also buy shipping supplies." />
@@ -247,7 +254,7 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
                       const l = byId.get(id);
                       return l ? (
                         <label key={id} className="op-item">
-                          {items.fix && (
+                          {items.fix && canEdit && (
                             <input type="checkbox" checked={!unticked.has(id)} onChange={(e) => {
                               const next = new Set(unticked);
                               if (e.target.checked) next.delete(id);
@@ -262,7 +269,7 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
                         </label>
                       ) : null;
                     })}
-                    {items.fix && (
+                    {items.fix && canEdit && (
                       <div className="row-wrap">
                         <button className="btn sm primary" disabled={running || !chosen} onClick={() => applyFix(o)}>
                           {FIXES[items.fix].label} ({chosen})
@@ -275,8 +282,8 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
               </div>
               <div className="op-side">
                 {o.value ? <span className="mono small">~{money(o.value)}</span> : null}
-                {o.action?.type === "categorize" && <button className="btn sm primary" disabled={running} onClick={categorize}>{running ? "Working…" : "Categorize now"}</button>}
-                {items && <button className="btn sm" onClick={() => setOpen(open === o.id ? null : o.id)}>{open === o.id ? "Hide" : items.fix ? "Review & fix" : "Show items"}</button>}
+                {o.action?.type === "categorize" && canEdit && <button className="btn sm primary" disabled={running} onClick={categorize}>{running ? "Working…" : "Categorize now"}</button>}
+                {items && <button className="btn sm" onClick={() => setOpen(open === o.id ? null : o.id)}>{open === o.id ? "Hide" : items.fix && canEdit ? "Review & fix" : "Show items"}</button>}
                 {o.action?.type === "tab" && o.action.tab === "mileage" && <button className="btn sm primary" onClick={() => openTab("mileage")}>Open mileage</button>}
                 {o.action?.type === "tab" && o.action.tab === "setup" && (
                   <button className="btn sm" onClick={() => document.getElementById("setup")?.scrollIntoView({ behavior: "smooth" })}>Answer</button>
@@ -306,14 +313,14 @@ function NumField({ label, value, onSave, suffix, step = "any" }: { label: strin
   );
 }
 
-function Setup({ year, inputs, setInputs }: { year: number; inputs: YearInputs; setInputs: (p: Partial<YearInputs>) => void }) {
+function Setup({ year, inputs, setInputs, readOnly }: { year: number; inputs: YearInputs; setInputs: (p: Partial<YearInputs>) => void; readOnly: boolean }) {
   const rules = rulesFor(year);
   const ho = inputs.homeOffice ?? {};
   const ph = inputs.phone ?? {}, net = inputs.internet ?? {}, f = inputs.fees ?? {}, inv = inputs.inventory ?? {}, car = inputs.vehicle ?? {};
   const hoAmt = homeOfficeAmounts(ho, rules);
   return (
     <section id="setup">
-      <div className="section-head"><h2>Your answers for {year}</h2><span className="muted small">Saved as you go</span></div>
+      <div className="section-head"><h2>Your answers for {year}</h2><span className="muted small">{readOnly ? "View only — try numbers here; they aren't saved" : "Saved as you go"}</span></div>
       <div className="setup-grid">
         <div className="card stack-sm">
           <h3>Home office</h3>

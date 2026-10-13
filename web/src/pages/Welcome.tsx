@@ -25,7 +25,7 @@ export default function Welcome({ userId }: { userId: string }) {
         setBusiness(data?.business_description ?? "");
         setToken(data?.inbound_token ?? null);
       });
-    supabase.from("email_connections").select("email").then(({ data }) => setGmail((data ?? []).map((c) => c.email)));
+    supabase.from("email_connections").select("email").eq("user_id", userId).then(({ data }) => setGmail((data ?? []).map((c) => c.email)));
     // Back from Google's consent screen.
     if (params.get("gmail") === "error") setError(`Gmail connection failed (${params.get("reason") ?? "unknown"}). You can try again or skip.`);
   }, [userId, params]);

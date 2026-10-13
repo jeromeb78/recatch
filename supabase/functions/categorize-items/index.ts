@@ -1,10 +1,10 @@
 // Fills in Schedule C line / business-vs-personal for line items.
-// POST (user JWT)
+// POST (user JWT); any body may include account: owner id when working in an account the caller was invited to
 //   { limit?: number }                      → items with no tax line yet → { categorized, remaining }
 //   { recheck: true, after?: id, limit? }   → re-run items marked personal or low-confidence (not hand-edited),
 //                                             e.g. after the business description changes → { categorized, next }
 import { categorizeItems } from "../_shared/categorize.ts";
-import { adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
+import { accountFor, adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
 
 const BATCH = 50;
 
@@ -12,12 +12,15 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  const user = await userFromRequest(req);
-  if (!user) return json({ error: "Unauthorized" }, 401);
+  const caller = await userFromRequest(req);
+  if (!caller) return json({ error: "Unauthorized" }, 401);
   const db = adminClient();
 
   try {
     const body = await req.json().catch(() => ({}));
+    const owner = await accountFor(caller.id, body?.account, "reports", "edit");
+    if (!owner) return json({ error: "You don't have permission to edit tax categories in this account" }, 403);
+    const user = { id: owner };
     const limit = Math.min(Math.max(Number(body?.limit) || 100, 1), 200);
     const recheck = body?.recheck === true;
 

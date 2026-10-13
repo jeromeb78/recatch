@@ -5,6 +5,7 @@ import { money, shortDate } from "../lib/format";
 import { mileageRate, rulesFor } from "../lib/taxrules";
 import { tripValue, type SuggestedTrip, type TaxProfile, type Trip, type WReceipt, merchantKey } from "../lib/writeoffs";
 import { DownloadIcon } from "../components/Icons";
+import { accountId, useAccount } from "../lib/account";
 
 interface Props {
   year: number;
@@ -38,6 +39,7 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
   }, [suggested]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const readOnly = !useAccount().can("reports", "edit");
   const [manual, setManual] = useState({ trip_date: new Date().toISOString().slice(0, 10), destination: "", purpose: "", miles: "" });
 
   const loggedMiles = trips.reduce((a, t) => a + Number(t.miles), 0);
@@ -48,9 +50,8 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
   async function insert(rows: Trip[]) {
     setBusy(true);
     setMsg(null);
-    const { data: { user } } = await supabase.auth.getUser();
     const { error } = await supabase.from("trips").insert(rows.map((t) => ({
-      user_id: user!.id, trip_date: t.trip_date, destination: t.destination, purpose: t.purpose,
+      user_id: accountId(), trip_date: t.trip_date, destination: t.destination, purpose: t.purpose,
       miles: t.miles, merchant_key: t.merchant_key, receipt_ids: t.receipt_ids,
     })));
     setBusy(false);
@@ -88,7 +89,7 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
         <h2>1 · Distance to each store</h2>
         <p className="muted small">Round trip from where you start (home or your office), in miles. Used to turn receipts into trips.</p>
         {stores.length === 0 ? <p className="muted">No receipts with a store for {year}.</p> : (
-          <div className="mapping">
+          <fieldset className="plain mapping" disabled={readOnly}>
             {stores.map(([k, s]) => (
               <label key={k} className="map-row">
                 <span>{s.name} <span className="muted small">· {s.count} receipt{s.count === 1 ? "" : "s"}</span></span>
@@ -105,16 +106,16 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
                 </span>
               </label>
             ))}
-          </div>
+          </fieldset>
         )}
       </section>
 
       <section className="card list-card">
         <div className="row-between table-tools">
           <h2>2 · Trips from your receipts</h2>
-          <button className="btn sm primary" disabled={busy || !chosen.length} onClick={() => insert(chosen)}>
+          {!readOnly && <button className="btn sm primary" disabled={busy || !chosen.length} onClick={() => insert(chosen)}>
             Add {chosen.length} trip{chosen.length === 1 ? "" : "s"} · {money(chosenValue)}
-          </button>
+          </button>}
         </div>
         {suggested.length === 0 ? <p className="muted pad">Every receipt day for {year} is already in your log.</p> : (
           <div className="scroll-x">
@@ -123,7 +124,7 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
               <tbody>
                 {suggested.map((t) => (
                   <tr key={keyOf(t)}>
-                    <td><input type="checkbox" aria-label={`Include ${t.destination} on ${t.trip_date}`} disabled={!t.miles}
+                    <td><input type="checkbox" aria-label={`Include ${t.destination} on ${t.trip_date}`} disabled={!t.miles || readOnly}
                       checked={picked.has(keyOf(t))} onChange={(e) => {
                         const next = new Set(picked);
                         if (e.target.checked) next.add(keyOf(t));
@@ -149,7 +150,7 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
           <h2>3 · Mileage log</h2>
           <button className="btn sm" onClick={exportLog} disabled={!trips.length}><DownloadIcon size={16} />CSV</button>
         </div>
-        <form className="row-wrap manual-trip" onSubmit={(e) => {
+        {!readOnly && <form className="row-wrap manual-trip" onSubmit={(e) => {
           e.preventDefault();
           const miles = Number(manual.miles);
           if (!manual.destination || !(miles > 0)) return setMsg("Enter a destination and miles.");
@@ -161,7 +162,7 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
           <label className="field">Business purpose<input placeholder="Ship orders" value={manual.purpose} onChange={(e) => setManual({ ...manual, purpose: e.target.value })} /></label>
           <label className="field">Miles<input type="number" min="0" step="0.1" inputMode="decimal" value={manual.miles} onChange={(e) => setManual({ ...manual, miles: e.target.value })} /></label>
           <button className="btn sm" disabled={busy}>Add trip</button>
-        </form>
+        </form>}
         {msg && <p className="muted small">{msg}</p>}
         {trips.length === 0 ? <p className="muted pad">No trips logged for {year} yet.</p> : (
           <div className="scroll-x">
@@ -175,7 +176,7 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
                     <td className="hide-sm muted small">{t.purpose}</td>
                     <td className="num">{Number(t.miles)}</td>
                     <td className="num">{money(tripValue(t))}</td>
-                    <td><button className="link danger" title="Remove" onClick={() => t.id && remove(t.id)}>✕</button></td>
+                    <td>{!readOnly && <button className="link danger" title="Remove" onClick={() => t.id && remove(t.id)}>✕</button>}</td>
                   </tr>
                 ))}
               </tbody>

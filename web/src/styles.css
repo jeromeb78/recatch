@@ -510,3 +510,32 @@ table.data td .muted.small { display: block; }
 .op-items .row-wrap { position: sticky; bottom: 0; background: var(--card); padding: 8px 0 2px; }
 .describe textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--hairline); border-radius: 12px; padding: 10px; }
 .describe .btn { align-self: flex-start; }
+
+/* ---------- team / shared accounts ---------- */
+fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset.plain:disabled select, fieldset.plain:disabled input { opacity: 0.75; }
+.account-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; max-width: 1100px; margin: 0 auto; padding: 8px 16px; font-size: 14px; }
+.account-bar.shared { background: var(--warn-bg); color: var(--warn-text); }
+.account-bar select { min-height: 36px; max-width: 70vw; }
+.member-list { list-style: none; margin: 12px 0; padding: 0; }
+.member { padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+.member:last-child { border-bottom: none; }
+.member .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.member .grow b { overflow-wrap: anywhere; }
+.member .grow .pill { align-self: flex-start; margin-left: 0; }
+.member-edit { margin-top: 12px; }
+.actions.tight { margin-top: 0; }
+.preset-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.preset { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--card); font-weight: 400; min-height: 0; }
+.preset.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.preset.custom { opacity: 0.6; }
+.preset.custom.on { opacity: 1; }
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 8px; }
+.invite-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hairline); }
+.invite-form h3 { margin: 0; }
+.invite-link { display: flex; flex-direction: column; gap: 8px; white-space: normal; }
+.invite-link .copy code { overflow-wrap: anywhere; }
+.invite-link .btn { align-self: flex-start; }
+.perm-list { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 4px; }
+.invite-card { display: flex; flex-direction: column; gap: 8px; }
+.invite-card h2 { margin: 0; }
