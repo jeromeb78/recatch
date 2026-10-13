@@ -82,7 +82,7 @@ export default function Home() {
 
       <div className="quick-links">
         <Link to="/reports?tab=inventory" className="quick-link"><b>Inventory &amp; COGS</b><span className="muted small">Cost per unit by SKU</span></Link>
-        <Link to="/reports?tab=taxes" className="quick-link"><b>Taxes</b><span className="muted small">Schedule C totals</span></Link>
+        <Link to="/reports?tab=writeoffs" className="quick-link"><b>Write-offs</b><span className="muted small">Find tax deductions</span></Link>
         <Link to="/reports?tab=export" className="quick-link"><b>Export</b><span className="muted small">QuickBooks &amp; Xero</span></Link>
       </div>
 

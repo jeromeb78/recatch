@@ -4,21 +4,24 @@ import { supabase } from "../lib/supabase";
 import { download, toCsv } from "../lib/csv";
 import { money, shortDate } from "../lib/format";
 import { TAX_LINES } from "../lib/tax";
+import { suggestTrips, type TaxProfile, type Trip, type WLine, type WReceipt } from "../lib/writeoffs";
+import WriteOffs from "./WriteOffs";
+import Mileage from "./Mileage";
 import {
   buildExport, DEFAULT_ACCOUNTS, DEFAULT_SETTINGS, PRESETS,
   type ExportLine, type ExportReceipt, type ExportSettings, type PresetKey,
 } from "../lib/exports";
 import { DownloadIcon } from "../components/Icons";
 
-interface InvLine extends ExportLine {
+interface InvLine extends ExportLine, Omit<WLine, keyof ExportLine | "quantity"> {
   id: string;
   units: number;
   item_total: number | null;
   category: string | null;
-  is_business: boolean;
 }
 
-type Tab = "inventory" | "taxes" | "export";
+type Tab = "writeoffs" | "mileage" | "inventory" | "export";
+const TABS: [Tab, string][] = [["writeoffs", "Write-offs"], ["mileage", "Mileage"], ["inventory", "Inventory & COGS"], ["export", "Export"]];
 const PAGE = 1000;
 
 function yearRange(year: string): [string, string] | null {
@@ -37,7 +40,8 @@ async function fetchAll<T>(make: (from: number, to: number) => PromiseLike<{ dat
 
 export default function Reports() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") as Tab) || "inventory";
+  const raw = params.get("tab");
+  const tab: Tab = raw === "taxes" ? "writeoffs" : TABS.some(([k]) => k === raw) ? (raw as Tab) : "writeoffs";
   const thisYear = new Date().getFullYear();
   const year = params.get("year") || String(thisYear);
   const setParam = (k: string, v: string) => {
@@ -47,7 +51,10 @@ export default function Reports() {
   };
 
   const [lines, setLines] = useState<InvLine[] | null>(null);
-  const [receipts, setReceipts] = useState<ExportReceipt[] | null>(null);
+  const [receipts, setReceipts] = useState<(ExportReceipt & WReceipt)[] | null>(null);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [profile, setProfile] = useState<TaxProfile>({});
+  const [hasDescription, setHasDescription] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -55,27 +62,50 @@ export default function Reports() {
     setError(null);
     const range = yearRange(year);
     try {
-      const [ls, rs] = await Promise.all([
+      const [ls, rs, ts, pr] = await Promise.all([
         fetchAll<InvLine>((a, b) => {
           let q = supabase.from("inventory_lines").select("*").order("purchase_date", { ascending: false }).range(a, b);
           if (range) q = q.gte("purchase_date", range[0]).lte("purchase_date", range[1]);
           return q;
         }),
-        fetchAll<ExportReceipt>((a, b) => {
-          let q = supabase.from("receipts").select("id, purchase_date, merchant, order_number, total, document_type, payment_method")
+        fetchAll<ExportReceipt & WReceipt>((a, b) => {
+          let q = supabase.from("receipts").select("id, purchase_date, merchant, order_number, total, shipping, document_type, payment_method")
             .order("purchase_date", { ascending: true }).range(a, b);
           if (range) q = q.gte("purchase_date", range[0]).lte("purchase_date", range[1]);
           return q;
         }),
+        fetchAll<Trip>((a, b) => {
+          let q = supabase.from("trips").select("id, trip_date, destination, purpose, miles, merchant_key, receipt_ids")
+            .order("trip_date", { ascending: true }).range(a, b);
+          if (range) q = q.gte("trip_date", range[0]).lte("trip_date", range[1]);
+          return q;
+        }),
+        supabase.from("profiles").select("tax_profile, business_description").maybeSingle(),
       ]);
       setLines(ls);
       setReceipts(rs);
+      setTrips(ts);
+      setProfile(((pr.data?.tax_profile ?? {}) as TaxProfile));
+      setHasDescription(!!pr.data?.business_description?.trim());
     } catch (e) {
       setError((e as Error).message);
     }
   }, [year]);
 
   useEffect(() => { load(); }, [load]);
+
+  const saveProfile = useCallback(async (next: TaxProfile) => {
+    setProfile(next);
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("profiles").update({ tax_profile: next }).eq("user_id", user!.id);
+    if (error) setError(error.message);
+  }, []);
+
+  const suggested = useMemo(
+    () => (receipts ? suggestTrips(receipts, trips, profile.store_miles ?? {}) : []),
+    [receipts, trips, profile.store_miles],
+  );
+  const needsYear = (tab === "writeoffs" || tab === "mileage") && year === "all";
 
   return (
     <div className="stack">
@@ -91,7 +121,7 @@ export default function Reports() {
       </div>
 
       <div className="tabs" role="tablist">
-        {([["inventory", "Inventory & COGS"], ["taxes", "Taxes"], ["export", "Export"]] as const).map(([k, label]) => (
+        {TABS.map(([k, label]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setParam("tab", k)}>
             {label}
           </button>
@@ -99,10 +129,17 @@ export default function Reports() {
       </div>
 
       {error && <p className="error">{error}</p>}
-      {!lines || !receipts ? <p className="muted">Loading…</p> : tab === "inventory" ? (
+      {needsYear ? (
+        <p className="muted">Write-offs follow each tax year’s rules — pick a year above.</p>
+      ) : !lines || !receipts ? <p className="muted">Loading…</p> : tab === "writeoffs" ? (
+        <WriteOffs year={Number(year)} lines={lines as unknown as WLine[]} trips={trips} suggested={suggested}
+          profile={profile} saveProfile={saveProfile} reload={load} openTab={(t) => setParam("tab", t)}
+          hasBusinessDescription={hasDescription} />
+      ) : tab === "mileage" ? (
+        <Mileage year={Number(year)} receipts={receipts} trips={trips} suggested={suggested}
+          profile={profile} saveProfile={saveProfile} reload={load} />
+      ) : tab === "inventory" ? (
         <Inventory lines={lines} year={year} />
-      ) : tab === "taxes" ? (
-        <Taxes lines={lines} reload={load} />
       ) : (
         <Exporter lines={lines} receipts={receipts} year={year} />
       )}
@@ -214,90 +251,6 @@ function Inventory({ lines, year }: { lines: InvLine[]; year: string }) {
         Costs are “landed”: each order’s tax, shipping and discounts are spread across its items by price, and pack sizes
         (e.g. a 24-count case) are counted as units. This is purchases for the period — your COGS for taxes is beginning
         inventory + purchases − ending inventory.
-      </p>
-    </>
-  );
-}
-
-/* ---------------- Taxes ---------------- */
-
-function Taxes({ lines, reload }: { lines: InvLine[]; reload: () => void }) {
-  const [running, setRunning] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const groups = useMemo(() => {
-    const by = new Map<string, { business: number; mixed: number; personal: number; count: number; unsure: number }>();
-    for (const l of lines) {
-      const k = l.tax_line ?? "none";
-      const g = by.get(k) ?? { business: 0, mixed: 0, personal: 0, count: 0, unsure: 0 };
-      const v = Number(l.landed_total ?? 0);
-      if (l.use_type === "personal" || k === "personal") g.personal += v;
-      else if (l.use_type === "mixed") g.mixed += v;
-      else g.business += v;
-      g.count++;
-      by.set(k, g);
-    }
-    return [...by.entries()].sort((a, b) => (b[1].business + b[1].mixed) - (a[1].business + a[1].mixed));
-  }, [lines]);
-
-  const uncategorized = lines.filter((l) => !l.tax_line).length;
-  const deductible = groups.filter(([k]) => k !== "personal" && k !== "none").reduce((a, [, g]) => a + g.business, 0);
-  const mixed = groups.reduce((a, [, g]) => a + g.mixed, 0);
-
-  async function categorize() {
-    setRunning(true);
-    setMsg("Categorizing…");
-    try {
-      for (let i = 0; i < 20; i++) {
-        const { data, error } = await supabase.functions.invoke("categorize-items", { body: { limit: 100 } });
-        if (error) {
-          const body = await (error as { context?: Response }).context?.json?.().catch(() => null);
-          throw new Error(body?.error ?? error.message);
-        }
-        setMsg(`Categorized ${data.categorized}… ${data.remaining} left`);
-        if (!data.remaining || !data.categorized) break;
-      }
-      setMsg("Done.");
-      reload();
-    } catch (e) {
-      setMsg((e as Error).message);
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  return (
-    <>
-      <div className="kpis">
-        <div className="card kpi"><span className="eyebrow">Business expenses</span><b className="big-number sm">{money(deductible)}</b><span className="muted small">by Schedule C line, below</span></div>
-        <div className="card kpi"><span className="eyebrow">Mixed use</span><b className="big-number sm">{money(mixed)}</b><span className="muted small">split these with your preparer</span></div>
-        <div className="card kpi"><span className="eyebrow">Not categorized</span><b className="big-number sm">{uncategorized}</b>
-          <button className="btn sm primary" onClick={categorize} disabled={running || uncategorized === 0}>{running ? "Working…" : "Categorize now"}</button>
-        </div>
-      </div>
-      {msg && <p className="muted small">{msg}</p>}
-
-      <section className="card list-card">
-        <div className="scroll-x">
-          <table className="data">
-            <thead><tr><th>Schedule C line</th><th className="num">Items</th><th className="num">Business</th><th className="num">Mixed</th><th className="num">Personal</th></tr></thead>
-            <tbody>
-              {groups.map(([k, g]) => (
-                <tr key={k}>
-                  <td>{k === "none" ? <span className="warn-text">Not categorized yet</span> : TAX_LINES[k] ?? k}</td>
-                  <td className="num">{g.count}</td>
-                  <td className="num">{g.business ? money(g.business) : "—"}</td>
-                  <td className="num">{g.mixed ? money(g.mixed) : "—"}</td>
-                  <td className="num">{g.personal ? money(g.personal) : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      <p className="muted small">
-        Suggested by Claude from each item and your business description (Settings), with landed amounts. These are
-        organizing estimates, not tax advice — confirm with your tax preparer. Change any item’s tax line on its receipt.
       </p>
     </>
   );

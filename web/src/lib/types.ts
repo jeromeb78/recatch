@@ -52,6 +52,7 @@ export interface LineItem {
   tax_line: string | null;
   use_type: "business" | "personal" | "mixed" | null;
   tax_confidence: number | null;
+  business_pct: number | null;
 }
 
 export interface Connection {

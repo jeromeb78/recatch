@@ -138,6 +138,7 @@ SPA rewrites are already included (`vercel.json`, `public/_redirects`). Remember
 cd web && npm run build                       # typecheck + production build
 deno test supabase/functions/_shared          # validation rules, HTML→text, signed OAuth state
 deno test --allow-env --allow-net supabase/functions/mcp   # OAuth + MCP end-to-end against a mock database
+deno test --sloppy-imports web/tests                       # write-off rules, scenarios, mileage, missed write-offs
 deno check supabase/functions/*/index.ts      # typecheck the edge functions
 ```
 
@@ -189,6 +190,36 @@ tokens, all stored hashed). Users add it in Claude under **Settings → Connecto
   `/.well-known/oauth-*` and `/oauth/register|token` to the function. **They hardcode the Supabase project ref**; change it if you fork.
 - With Claude in Chrome, Claude can open order pages and call `add_receipt` — the same dedupe key as the extension, so nothing is imported twice.
 - Settings → Claude lists connected apps; Disconnect revokes their tokens.
+
+## Write-offs and mileage
+
+**Reports → Write-offs** runs the year's line items through that year's IRS rules (`web/src/lib/taxrules.ts`, with sources)
+and shows three ways to claim:
+- **Conservative:** clear business items only.
+- **Balanced:** recommended.
+- **Maximum:** everything you can document.
+
+Below the scenarios:
+- **Totals by Schedule C line**, side by side for all three scenarios.
+- **Missed write-offs**, with one-click fixes you review first:
+  - personal items that look like your inventory
+  - business supplies marked personal
+  - unconfirmed items and mixed-use items without a %
+  - de minimis / Section 179 equipment
+  - un-logged store trips
+  - home office, phone and internet, platform fees, ending inventory
+- **Your answers for the year**, used in the calculations.
+- **How to claim:** step-by-step directions for each line, including the de minimis election statement text.
+
+**Reports → Mileage** turns store receipts into a mileage log. You set the round-trip distance to each store, review the
+suggested trips, and add them to the log. Each trip uses the IRS rate for its date (2026 changed mid-year). Manual trips
+can be added too, and the log exports as CSV.
+
+**Updating the rules each year:**
+1. Add the new year's figures to `TAX_RULES` once the IRS publishes them (inflation adjustments in Oct–Nov, mileage in December).
+2. Run `deno test --sloppy-imports web/tests`.
+
+These are estimates for organizing records, not tax advice.
 
 ## Getting in-store receipts by email
 
