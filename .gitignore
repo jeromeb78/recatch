@@ -10,3 +10,4 @@ supabase/.branches/
 *.log
 *.tsbuildinfo
 extension/dist/
+web/deno.lock
