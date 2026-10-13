@@ -93,6 +93,7 @@ export default function ReceiptDetail() {
         pack_size: Math.max(1, Math.round(it.pack_size || 1)),
         tax_line: it.tax_line || null,
         use_type: it.use_type || null,
+        business_pct: it.use_type === "mixed" ? it.business_pct ?? null : null,
         tax_confidence: it.tax_confidence,
       }));
       const existing = rows.filter((r) => "id" in r);
@@ -245,6 +246,14 @@ export default function ReceiptDetail() {
                       <option value="">—</option>
                       {Object.entries(USE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                     </select>
+                    {it.use_type === "mixed" && (
+                      <label className="pct" title="Business share — only this part is deductible">
+                        <input className="num" type="number" min="0" max="100" step="5" placeholder="%" aria-label="Business use %"
+                          value={it.business_pct ?? ""}
+                          onChange={(e) => setItem(i, { business_pct: e.target.value === "" ? null : Math.min(100, Math.max(0, Math.round(Number(e.target.value)))) })} />
+                        <span className="muted small">% biz</span>
+                      </label>
+                    )}
                   </td>
                   <td>
                     <button
@@ -268,7 +277,7 @@ export default function ReceiptDetail() {
                       setItems([...items, {
                         position: items.length, description: "", store_sku: null, quantity: 1,
                         unit_price: null, total: null, category_id: null, woo_sku: null,
-                        pack_size: 1, tax_line: null, use_type: null, tax_confidence: null,
+                        pack_size: 1, tax_line: null, use_type: null, tax_confidence: null, business_pct: null,
                       }])}
                   >+ Add line</button>
                 </td>
