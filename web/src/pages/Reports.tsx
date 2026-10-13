@@ -12,6 +12,7 @@ import {
   type ExportLine, type ExportReceipt, type ExportSettings, type PresetKey,
 } from "../lib/exports";
 import { DownloadIcon } from "../components/Icons";
+import { accountId, useAccount } from "../lib/account";
 
 interface InvLine extends ExportLine, Omit<WLine, keyof ExportLine | "quantity"> {
   id: string;
@@ -64,23 +65,23 @@ export default function Reports() {
     try {
       const [ls, rs, ts, pr] = await Promise.all([
         fetchAll<InvLine>((a, b) => {
-          let q = supabase.from("inventory_lines").select("*").order("purchase_date", { ascending: false }).range(a, b);
+          let q = supabase.from("inventory_lines").select("*").eq("user_id", accountId()).order("purchase_date", { ascending: false }).range(a, b);
           if (range) q = q.gte("purchase_date", range[0]).lte("purchase_date", range[1]);
           return q;
         }),
         fetchAll<ExportReceipt & WReceipt>((a, b) => {
           let q = supabase.from("receipts").select("id, purchase_date, merchant, order_number, total, shipping, document_type, payment_method")
-            .order("purchase_date", { ascending: true }).range(a, b);
+            .eq("user_id", accountId()).order("purchase_date", { ascending: true }).range(a, b);
           if (range) q = q.gte("purchase_date", range[0]).lte("purchase_date", range[1]);
           return q;
         }),
         fetchAll<Trip>((a, b) => {
           let q = supabase.from("trips").select("id, trip_date, destination, purpose, miles, merchant_key, receipt_ids")
-            .order("trip_date", { ascending: true }).range(a, b);
+            .eq("user_id", accountId()).order("trip_date", { ascending: true }).range(a, b);
           if (range) q = q.gte("trip_date", range[0]).lte("trip_date", range[1]);
           return q;
         }),
-        supabase.from("profiles").select("tax_profile, business_description").maybeSingle(),
+        supabase.from("profiles").select("tax_profile, business_description").eq("user_id", accountId()).maybeSingle(),
       ]);
       setLines(ls);
       setReceipts(rs);
@@ -94,12 +95,14 @@ export default function Reports() {
 
   useEffect(() => { load(); }, [load]);
 
+  const canEdit = useAccount().can("reports", "edit");
   const saveProfile = useCallback(async (next: TaxProfile) => {
     setProfile(next);
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("profiles").update({ tax_profile: next }).eq("user_id", user!.id);
+    // View-only members can try what-ifs; nothing is saved to the account.
+    if (!canEdit) return;
+    const { error } = await supabase.from("profiles").update({ tax_profile: next }).eq("user_id", accountId());
     if (error) setError(error.message);
-  }, []);
+  }, [canEdit]);
 
   const suggested = useMemo(
     () => (receipts ? suggestTrips(receipts, trips, profile.store_miles ?? {}) : []),
@@ -262,9 +265,10 @@ function Exporter({ lines, receipts, year }: { lines: InvLine[]; receipts: Expor
   const [preset, setPreset] = useState<PresetKey>("qbo_items");
   const [settings, setSettings] = useState<ExportSettings>(DEFAULT_SETTINGS);
   const [saved, setSaved] = useState<string | null>(null);
+  const canEdit = useAccount().can("reports", "edit");
 
   useEffect(() => {
-    supabase.from("profiles").select("export_settings").maybeSingle().then(({ data }) => {
+    supabase.from("profiles").select("export_settings").eq("user_id", accountId()).maybeSingle().then(({ data }) => {
       const s = (data?.export_settings ?? {}) as Partial<ExportSettings>;
       setSettings({ ...DEFAULT_SETTINGS, ...s, accounts: { ...DEFAULT_ACCOUNTS, ...(s.accounts ?? {}) } });
     });
@@ -272,8 +276,8 @@ function Exporter({ lines, receipts, year }: { lines: InvLine[]; receipts: Expor
 
   async function save(next: ExportSettings) {
     setSettings(next);
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("profiles").update({ export_settings: next }).eq("user_id", user!.id);
+    if (!canEdit) return; // view-only: applies to this download, not saved
+    const { error } = await supabase.from("profiles").update({ export_settings: next }).eq("user_id", accountId());
     setSaved(error ? error.message : "Saved");
     setTimeout(() => setSaved(null), 1500);
   }

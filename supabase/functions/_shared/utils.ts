@@ -37,6 +37,26 @@ export async function userFromRequest(req: Request): Promise<{ id: string; email
   return { id: data.user.id, email: data.user.email ?? undefined };
 }
 
+const LEVEL_RANK: Record<string, number> = { none: 0, view: 1, edit: 2 };
+
+/**
+ * The account a request acts on: the caller's own, or an account they were invited to with at least
+ * `level` access to `area` (see account_members). Returns null when they lack that access.
+ */
+export async function accountFor(
+  userId: string,
+  account: unknown,
+  area: "receipts" | "reports" | "settings" | "team",
+  level: "view" | "edit",
+): Promise<string | null> {
+  if (account == null || account === "" || account === userId) return userId;
+  if (typeof account !== "string") return null;
+  const { data } = await adminClient().from("account_members").select("permissions")
+    .eq("owner_id", account).eq("member_id", userId).maybeSingle();
+  const have = (data?.permissions as Record<string, string> | undefined)?.[area] ?? "none";
+  return (LEVEL_RANK[have] ?? 0) >= LEVEL_RANK[level] ? account : null;
+}
+
 export function timingSafeEqual(a: string, b: string): boolean {
   const ea = new TextEncoder().encode(a);
   const eb = new TextEncoder().encode(b);

@@ -221,6 +221,28 @@ can be added too, and the log exports as CSV.
 
 These are estimates for organizing records, not tax advice.
 
+## Team access
+
+Settings → **Team** lets the account owner invite people (a bookkeeper, assistant or accountant) and choose, per area,
+what they can do:
+
+| Area | Covers | Levels |
+| --- | --- | --- |
+| Receipts | receipts, line items, photos, review queue, snapping | no access / view / edit |
+| Reports & taxes | write-offs, mileage, inventory/COGS, exports | no access / view / edit |
+| Settings | business description, categories | no access / view / edit |
+| Team | inviting people and changing access | no access / manage |
+
+Presets (Bookkeeper, Assistant, Accountant read-only, Admin) fill these in; "Fine-tune" sets each area by hand.
+Creating an invite gives a one-time link (valid 7 days) to copy or email. The person opens it, signs up or signs in
+**with the invited email**, and accepts. People who belong to more than one account pick one from the account bar under
+the top navigation. Gmail, the forwarding address, the browser extension and the Claude connector always stay with the owner.
+
+Access is enforced in the database: every table and the receipt files bucket check `can_access(owner, area, level)`
+in row-level security (migration `team`), invite tokens are stored only as SHA-256 hashes, only the owner can grant or
+remove team management, and nobody can change their own access. `process-upload` and `categorize-items` take an optional
+`account` (owner id) and check the caller's access before acting on it.
+
 ## Getting in-store receipts by email
 
 - **Target:** In-store purchases linked to your Target Circle account appear in the app's purchase history. Target can email receipts at checkout, and those emails are picked up by Gmail sync.

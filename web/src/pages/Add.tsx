@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BUCKET, supabase } from "../lib/supabase";
 import { CameraIcon, FileIcon } from "../components/Icons";
+import { accountId } from "../lib/account";
 
 type Result = { name: string; state: "working" | "done" | "error"; text: string; receiptId?: string };
 
@@ -36,8 +37,7 @@ export default function Add() {
 
   async function handle(files: FileList | null) {
     if (!files?.length) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const owner = accountId();
     const list = Array.from(files);
     const offset = results.length;
     setResults((rs) => [...rs, ...list.map((f) => ({ name: f.name, state: "working" as const, text: "Uploading…" }))]);
@@ -48,14 +48,14 @@ export default function Add() {
         const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
         const body = isPdf ? file : await prepareImage(file);
         const base = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 60) || "receipt";
-        const path = `${user.id}/uploads/${Date.now()}-${base}.${isPdf ? "pdf" : body === file ? file.name.split(".").pop() : "jpg"}`;
+        const path = `${owner}/uploads/${Date.now()}-${base}.${isPdf ? "pdf" : body === file ? file.name.split(".").pop() : "jpg"}`;
         const contentType = isPdf ? "application/pdf" : body.type || file.type;
 
         const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, body, { contentType });
         if (upErr) throw upErr;
 
         update(i, { text: "Reading receipt…" });
-        const { data, error } = await supabase.functions.invoke("process-upload", { body: { path } });
+        const { data, error } = await supabase.functions.invoke("process-upload", { body: { path, account: owner } });
         if (error) {
           const detail = await (error as { context?: Response }).context?.json?.().catch(() => null);
           throw new Error(detail?.error ?? error.message);

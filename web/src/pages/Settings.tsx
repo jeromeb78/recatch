@@ -5,6 +5,8 @@ import { useCategories } from "../lib/useCategories";
 import { date, relative } from "../lib/format";
 import type { Connection } from "../lib/types";
 import { AccountSection, BusinessProfile, ClaudeSection, ExtensionSection } from "../components/SettingsSections";
+import { MembershipSection, TeamSection } from "../components/Team";
+import { accountId, useAccount } from "../lib/account";
 
 const INBOUND = (import.meta.env.VITE_INBOUND_ADDRESS as string | undefined) ?? "";
 
@@ -30,6 +32,30 @@ async function invokeError(error: unknown): Promise<string> {
 }
 
 export default function Settings({ userId, email }: { userId: string; email: string }) {
+  const { account } = useAccount();
+  return account.own ? <OwnerSettings userId={userId} email={email} /> : <MemberSettings userId={userId} email={email} />;
+}
+
+/** Settings while working in someone else's account: only what the owner shared, plus your own login. */
+function MemberSettings({ userId, email }: { userId: string; email: string }) {
+  const { account, can } = useAccount();
+  return (
+    <div className="narrow">
+      <h1>Settings</h1>
+      <p className="muted">
+        For <b>{account.ownerEmail}</b>'s account. Gmail, the forwarding address, the browser extension and the Claude connector
+        are managed by the owner.
+      </p>
+      <MembershipSection userId={userId} />
+      {can("settings") && <BusinessProfile userId={account.ownerId} readOnly={!can("settings", "edit")} />}
+      {can("settings") && <Categories readOnly={!can("settings", "edit")} />}
+      {can("team", "edit") && <TeamSection userId={userId} />}
+      <AccountSection email={email} />
+    </div>
+  );
+}
+
+function OwnerSettings({ userId, email }: { userId: string; email: string }) {
   const [params, setParams] = useSearchParams();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [token, setToken] = useState<string | null>(null);
@@ -41,9 +67,10 @@ export default function Settings({ userId, email }: { userId: string; email: str
     const { data } = await supabase
       .from("email_connections")
       .select("id, email, status, last_error, sync_from, last_synced_at")
+      .eq("user_id", userId)
       .order("created_at");
     setConnections((data ?? []) as Connection[]);
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     loadConnections();
@@ -166,12 +193,13 @@ export default function Settings({ userId, email }: { userId: string; email: str
       <ClaudeSection />
       <BusinessProfile userId={userId} />
       <Categories />
+      <TeamSection userId={userId} />
       <AccountSection email={email} />
     </div>
   );
 }
 
-function Categories() {
+function Categories({ readOnly = false }: { readOnly?: boolean }) {
   const { categories, reload } = useCategories();
   const [name, setName] = useState("");
   const [business, setBusiness] = useState(false);
@@ -180,8 +208,7 @@ function Categories() {
   async function add(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("categories").insert({ user_id: user!.id, name: name.trim(), is_business: business });
+    const { error } = await supabase.from("categories").insert({ user_id: accountId(), name: name.trim(), is_business: business });
     if (error) return setError(error.code === "23505" ? "That category already exists." : error.message);
     setName("");
     setBusiness(false);
@@ -205,6 +232,7 @@ function Categories() {
     <section className="card">
       <h2>Categories</h2>
       <p className="muted small">Business categories roll up into the Business total.</p>
+      <fieldset className="plain" disabled={readOnly}>
       <table className="cats">
         <tbody>
           {categories.map((c) => (
@@ -221,18 +249,19 @@ function Categories() {
                   Business
                 </label>
               </td>
-              <td><button className="link danger" onClick={() => remove(c.id, c.name)}>Delete</button></td>
+              <td>{!readOnly && <button className="link danger" onClick={() => remove(c.id, c.name)}>Delete</button>}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <form className="add-cat" onSubmit={add}>
+      </fieldset>
+      {!readOnly && <form className="add-cat" onSubmit={add}>
         <input placeholder="New category" value={name} onChange={(e) => setName(e.target.value)} />
         <label className="inline">
           <input type="checkbox" checked={business} onChange={(e) => setBusiness(e.target.checked)} /> Business
         </label>
         <button>Add</button>
-      </form>
+      </form>}
       {error && <p className="error">{error}</p>}
     </section>
   );

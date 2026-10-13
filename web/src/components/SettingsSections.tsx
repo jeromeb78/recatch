@@ -5,7 +5,7 @@ import { relative } from "../lib/format";
 
 /* ---------------- Business profile ---------------- */
 
-export function BusinessProfile({ userId }: { userId: string }) {
+export function BusinessProfile({ userId, readOnly = false }: { userId: string; readOnly?: boolean }) {
   const [text, setText] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -15,6 +15,7 @@ export function BusinessProfile({ userId }: { userId: string }) {
   }, [userId]);
 
   async function save() {
+    if (readOnly) return;
     const { error } = await supabase.from("profiles").update({ business_description: text.trim() || null }).eq("user_id", userId);
     setSaved(error ? error.message : "Saved");
     setTimeout(() => setSaved(null), 1500);
@@ -22,12 +23,12 @@ export function BusinessProfile({ userId }: { userId: string }) {
 
   return (
     <section className="card">
-      <div className="row-between"><h2>Your business</h2>{saved && <span className="ok small">{saved}</span>}</div>
+      <div className="row-between"><h2>{readOnly ? "The business" : "Your business"}</h2>{saved && <span className="ok small">{saved}</span>}</div>
       <p className="muted small">
         One or two sentences about what you sell and buy. Claude uses this to decide what counts as inventory or a business
         expense when it categorizes items for taxes.
       </p>
-      <textarea rows={3} className="full-width" value={text} onChange={(e) => setText(e.target.value)} onBlur={save}
+      <textarea rows={3} className="full-width" readOnly={readOnly} value={text} onChange={(e) => setText(e.target.value)} onBlur={save}
         aria-label="Business description"
         placeholder="e.g. I resell die-cast cars (Hot Wheels, Matchbox) on my WooCommerce store and eBay. I buy inventory at Walmart and Target and ship with Pirate Ship." />
     </section>

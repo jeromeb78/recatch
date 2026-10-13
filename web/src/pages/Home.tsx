@@ -7,6 +7,7 @@ import { money, signedTotal } from "../lib/format";
 import { ChevronRight } from "../components/Icons";
 import ReceiptRow from "../components/ReceiptRow";
 import type { Receipt } from "../lib/types";
+import { accountId, useAccount } from "../lib/account";
 
 const COLUMNS =
   "id, source, status, review_reasons, document_type, merchant, order_number, purchase_date, currency, total, category_id, files, created_at";
@@ -16,21 +17,24 @@ function monthStart(d = new Date()): string {
 }
 
 export default function Home() {
+  const { account, can } = useAccount();
+  const seesReceipts = can("receipts") || can("reports");
   const { categories } = useCategories();
   const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
-  const reviewCount = useReviewCount();
+  const reviewCount = useReviewCount(can("receipts", "edit"));
   const [month, setMonth] = useState<Receipt[] | null>(null);
   const [recent, setRecent] = useState<Receipt[] | null>(null);
 
   useEffect(() => {
-    supabase.from("receipts").select(COLUMNS).gte("purchase_date", monthStart())
+    if (!seesReceipts) return;
+    supabase.from("receipts").select(COLUMNS).eq("user_id", accountId()).gte("purchase_date", monthStart())
       .then(({ data }) => setMonth((data ?? []) as Receipt[]));
-    supabase.from("receipts").select(COLUMNS)
+    supabase.from("receipts").select(COLUMNS).eq("user_id", accountId())
       .order("purchase_date", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
       .limit(5)
       .then(({ data }) => setRecent((data ?? []) as Receipt[]));
-  }, []);
+  }, [seesReceipts]);
 
   const totals = useMemo(() => {
     let business = 0, personal = 0;
@@ -45,7 +49,32 @@ export default function Home() {
 
   const monthLabel = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
-  if (recent && recent.length === 0) return <GetStarted />;
+  if (!seesReceipts) {
+    return (
+      <div className="stack">
+        <div className="page-head">
+          <span className="eyebrow">{account.ownerEmail}</span>
+          <h1>Welcome</h1>
+        </div>
+        <p className="card">
+          You can open {can("settings") ? <Link to="/settings">Settings</Link> : "Settings"} in this account. Ask {account.ownerEmail} if you need
+          access to receipts or reports.
+        </p>
+      </div>
+    );
+  }
+  if (recent && recent.length === 0) {
+    if (account.own) return <GetStarted />;
+    return (
+      <div className="stack">
+        <div className="page-head">
+          <span className="eyebrow">{account.ownerEmail}</span>
+          <h1>No receipts yet</h1>
+        </div>
+        <p className="card muted">Receipts in this account will show up here.{can("receipts", "edit") && <> <Link to="/add">Snap one</Link> to get started.</>}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="stack">
@@ -80,16 +109,16 @@ export default function Home() {
         </Link>
       )}
 
-      <div className="quick-links">
+      {can("reports") && <div className="quick-links">
         <Link to="/reports?tab=inventory" className="quick-link"><b>Inventory &amp; COGS</b><span className="muted small">Cost per unit by SKU</span></Link>
         <Link to="/reports?tab=writeoffs" className="quick-link"><b>Write-offs</b><span className="muted small">Find tax deductions</span></Link>
         <Link to="/reports?tab=export" className="quick-link"><b>Export</b><span className="muted small">QuickBooks &amp; Xero</span></Link>
-      </div>
+      </div>}
 
       <section>
         <div className="section-head">
           <h2>Recent</h2>
-          <Link to="/receipts">See all</Link>
+          {can("receipts") && <Link to="/receipts">See all</Link>}
         </div>
         <div className="card list-card">
           {recent === null ? <p className="muted pad">Loading…</p> : recent.map((r) => (

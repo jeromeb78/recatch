@@ -7,6 +7,7 @@ import { SOURCE_LABEL } from "../lib/merchant";
 import { TAX_LINES, taxShort } from "../lib/tax";
 import { AlertIcon, CheckIcon, CloseIcon, FileIcon } from "../components/Icons";
 import type { LineItem, Receipt } from "../lib/types";
+import { accountId } from "../lib/account";
 
 interface Suggestion {
   sku: string;
@@ -16,7 +17,7 @@ interface Suggestion {
 /** Looks up the Woo SKU used last time for the same store SKU or the same item description. */
 async function suggestSku(item: LineItem): Promise<Suggestion | null> {
   const base = () =>
-    supabase.from("line_items").select("woo_sku, created_at").not("woo_sku", "is", null)
+    supabase.from("line_items").select("woo_sku, created_at").eq("user_id", accountId()).not("woo_sku", "is", null)
       .neq("receipt_id", item.receipt_id).order("created_at", { ascending: false }).limit(1);
   if (item.store_sku) {
     const { data } = await base().eq("store_sku", item.store_sku);
@@ -42,7 +43,7 @@ export default function Review() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.from("receipts").select("*").eq("status", "needs_review")
+    supabase.from("receipts").select("*").eq("user_id", accountId()).eq("status", "needs_review")
       .order("purchase_date", { ascending: false, nullsFirst: true })
       .then(({ data, error }) => {
         if (error) return setError(error.message);
