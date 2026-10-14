@@ -20,7 +20,7 @@ function businessAmount(lines: LineItem[]): number {
 }
 
 /** Year of receipts as JPG pages (plus original PDFs) in batches of 40, with an index. */
-export function IrsExport({ year }: { year: string }) {
+export function IrsExport({ year, business, businessName }: { year: string; business?: string; businessName?: string }) {
   const [scope, setScope] = useState<"business" | "all">("business");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -34,6 +34,7 @@ export function IrsExport({ year }: { year: string }) {
         let q = supabase.from("receipts").select("*").eq("user_id", accountId())
           .order("purchase_date", { ascending: true }).range(from, from + 499);
         if (year !== "all") q = q.gte("purchase_date", `${year}-01-01`).lte("purchase_date", `${year}-12-31`);
+        if (business === "none") q = q.is("business_id", null);
         const { data, error } = await q;
         if (error) throw error;
         receipts.push(...((data ?? []) as Receipt[]));
@@ -46,7 +47,10 @@ export function IrsExport({ year }: { year: string }) {
         if (error) throw error;
         for (const l of (data ?? []) as LineItem[]) byReceipt.set(l.receipt_id, [...(byReceipt.get(l.receipt_id) ?? []), l]);
       }
-      const chosen = receipts.filter((r) => scope === "all" || businessAmount(byReceipt.get(r.id) ?? []) > 0);
+      // A business's receipts: assigned to it, or with at least one item allocated to it.
+      const inBusiness = (r: Receipt) => !business || business === "none" || r.business_id === business
+        || (byReceipt.get(r.id) ?? []).some((l) => l.business_id === business);
+      const chosen = receipts.filter((r) => inBusiness(r) && (scope === "all" || businessAmount(byReceipt.get(r.id) ?? []) > 0));
       if (!chosen.length) {
         setMsg(scope === "business" ? "No receipts with business items for this period." : "No receipts for this period.");
         return;
@@ -77,7 +81,7 @@ export function IrsExport({ year }: { year: string }) {
       entries.push({
         name: "README.txt",
         data: new TextEncoder().encode([
-          `Receipt images for ${year === "all" ? "all years" : year} (${scope === "business" ? "receipts with business items" : "all receipts"}).`,
+          `Receipt images${businessName ? ` for ${businessName}` : ""}, ${year === "all" ? "all years" : year} (${scope === "business" ? "receipts with business items" : "all receipts"}).`,
           "",
           "Each JPG is a letter-size page with the receipt's details and itemization as recorded in Receipt Catcher,",
           "followed by the original document exactly as it was captured (photo, email or store order page text).",
@@ -88,7 +92,8 @@ export function IrsExport({ year }: { year: string }) {
         ].join("\n")),
       });
       setMsg("Packing the ZIP…");
-      saveBlob(`receipts-irs-${year}.zip`, new Blob([makeZip(entries)], { type: "application/zip" }));
+      const slug = businessName ? `-${businessName.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : "";
+      saveBlob(`receipts-irs${slug}-${year}.zip`, new Blob([makeZip(entries)], { type: "application/zip" }));
       setMsg(`Done: ${chosen.length} receipt${chosen.length === 1 ? "" : "s"}, ${index.length} file${index.length === 1 ? "" : "s"} in ${batch} upload batch${batch === 1 ? "" : "es"}.`);
     } catch (e) {
       setMsg((e as Error).message);

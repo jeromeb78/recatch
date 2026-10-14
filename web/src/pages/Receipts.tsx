@@ -9,12 +9,13 @@ import { SOURCE_LABEL } from "../lib/merchant";
 import { download, toCsv } from "../lib/csv";
 import type { Receipt } from "../lib/types";
 import { accountId } from "../lib/account";
+import { useBusinesses } from "../lib/businesses";
 
 const PAGE = 1000;
 const COLUMNS =
   "id, source, status, review_reasons, document_type, merchant, order_number, purchase_date, currency, subtotal, tax, shipping, discount, total, payment_method, category_id, notes, confidence, email_subject, email_from, files, created_at";
 
-type Filters = { q: string; status: string; category: string; source: string; from: string; to: string };
+type Filters = { q: string; status: string; category: string; source: string; from: string; to: string; business: string };
 
 function useFilters(): [Filters, (patch: Partial<Filters>) => void] {
   const [params, setParams] = useSearchParams();
@@ -25,6 +26,7 @@ function useFilters(): [Filters, (patch: Partial<Filters>) => void] {
     source: params.get("source") ?? "",
     from: params.get("from") ?? "",
     to: params.get("to") ?? "",
+    business: params.get("business") ?? "",
   };
   const update = (patch: Partial<Filters>) => {
     const next = { ...filters, ...patch };
@@ -49,6 +51,8 @@ async function fetchReceipts(f: Filters): Promise<Receipt[]> {
     if (f.source) q = q.eq("source", f.source);
     if (f.category === "none") q = q.is("category_id", null);
     else if (f.category) q = q.eq("category_id", f.category);
+    if (f.business === "none") q = q.is("business_id", null);
+    else if (f.business) q = q.eq("business_id", f.business);
     if (f.from) q = q.gte("purchase_date", f.from);
     if (f.to) q = q.lte("purchase_date", f.to);
     const term = f.q.replace(/[,()*%\\]/g, " ").trim();
@@ -72,6 +76,7 @@ export default function Receipts() {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const { categories } = useCategories();
+  const { businesses } = useBusinesses();
   const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
   const key = JSON.stringify(filters);
@@ -193,9 +198,18 @@ export default function Receipts() {
         ))}
       </div>
 
-      <details className="more-filters" open={!!(filters.category || filters.from || filters.to)}>
-        <summary>Category &amp; dates</summary>
+      <details className="more-filters" open={!!(filters.category || filters.from || filters.to || filters.business)}>
+        <summary>{businesses?.length ? "Business, category & dates" : "Category & dates"}</summary>
         <div className="filters">
+          {!!businesses?.length && (
+            <label>Business
+              <select value={filters.business} onChange={(e) => setFilters({ business: e.target.value })}>
+                <option value="">All businesses</option>
+                <option value="none">Not assigned</option>
+                {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </label>
+          )}
           <label>Category
             <select value={filters.category} onChange={(e) => setFilters({ category: e.target.value })}>
               <option value="">All categories</option>

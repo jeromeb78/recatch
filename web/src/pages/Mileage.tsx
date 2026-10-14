@@ -15,9 +15,11 @@ interface Props {
   profile: TaxProfile;
   saveProfile: (next: TaxProfile) => Promise<void>;
   reload: () => void;
+  /** New trips are logged to this business. */
+  businessId?: string;
 }
 
-export default function Mileage({ year, receipts, trips, suggested, profile, saveProfile, reload }: Props) {
+export default function Mileage({ year, receipts, trips, suggested, profile, saveProfile, reload, businessId }: Props) {
   const rules = rulesFor(year);
   const storeMiles = profile.store_miles ?? {};
   const stores = useMemo(() => {
@@ -51,7 +53,7 @@ export default function Mileage({ year, receipts, trips, suggested, profile, sav
     setBusy(true);
     setMsg(null);
     const { error } = await supabase.from("trips").insert(rows.map((t) => ({
-      user_id: accountId(), trip_date: t.trip_date, destination: t.destination, purpose: t.purpose,
+      user_id: accountId(), business_id: businessId ?? null, trip_date: t.trip_date, destination: t.destination, purpose: t.purpose,
       miles: t.miles, merchant_key: t.merchant_key, receipt_ids: t.receipt_ids,
     })));
     setBusy(false);

@@ -14,6 +14,7 @@ import {
 import { DownloadIcon } from "../components/Icons";
 import { accountId, useAccount } from "../lib/account";
 import { IrsExport } from "../components/IrsExport";
+import { ENTITY_FORM, useBusinesses, usesScheduleC } from "../lib/businesses";
 
 interface InvLine extends ExportLine, Omit<WLine, keyof ExportLine | "quantity"> {
   id: string;
@@ -52,6 +53,12 @@ export default function Reports() {
     setParams(p, { replace: true });
   };
 
+  // Business scope: one business, "none" (not assigned) or "all". With businesses, default to the first.
+  const { businesses, active } = useBusinesses();
+  const biz = params.get("biz") || (active.length ? active[0].id : "all");
+  const business = active.find((b) => b.id === biz) ?? (businesses ?? []).find((b) => b.id === biz);
+  const [unassigned, setUnassigned] = useState(0);
+
   const [lines, setLines] = useState<InvLine[] | null>(null);
   const [receipts, setReceipts] = useState<(ExportReceipt & WReceipt)[] | null>(null);
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -60,25 +67,30 @@ export default function Reports() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (businesses === null) return; // wait for the business list to pick the scope
     setLines(null);
     setError(null);
     const range = yearRange(year);
+    const scoped = <T,>(q: T): T => {
+      const b = q as unknown as { eq(c: string, v: string): T; is(c: string, v: null): T };
+      return biz === "all" ? q : biz === "none" ? b.is("business_id", null) : b.eq("business_id", biz);
+    };
     try {
       const [ls, rs, ts, pr] = await Promise.all([
         fetchAll<InvLine>((a, b) => {
-          let q = supabase.from("inventory_lines").select("*").eq("user_id", accountId()).order("purchase_date", { ascending: false }).range(a, b);
+          let q = scoped(supabase.from("inventory_lines").select("*").eq("user_id", accountId())).order("purchase_date", { ascending: false }).range(a, b);
           if (range) q = q.gte("purchase_date", range[0]).lte("purchase_date", range[1]);
           return q;
         }),
         fetchAll<ExportReceipt & WReceipt>((a, b) => {
-          let q = supabase.from("receipts").select("id, purchase_date, merchant, order_number, total, shipping, document_type, payment_method")
-            .eq("user_id", accountId()).order("purchase_date", { ascending: true }).range(a, b);
+          let q = scoped(supabase.from("receipts").select("id, purchase_date, merchant, order_number, total, shipping, document_type, payment_method")
+            .eq("user_id", accountId())).order("purchase_date", { ascending: true }).range(a, b);
           if (range) q = q.gte("purchase_date", range[0]).lte("purchase_date", range[1]);
           return q;
         }),
         fetchAll<Trip>((a, b) => {
-          let q = supabase.from("trips").select("id, trip_date, destination, purpose, miles, merchant_key, receipt_ids")
-            .eq("user_id", accountId()).order("trip_date", { ascending: true }).range(a, b);
+          let q = scoped(supabase.from("trips").select("id, trip_date, destination, purpose, miles, merchant_key, receipt_ids")
+            .eq("user_id", accountId())).order("trip_date", { ascending: true }).range(a, b);
           if (range) q = q.gte("trip_date", range[0]).lte("trip_date", range[1]);
           return q;
         }),
@@ -87,12 +99,19 @@ export default function Reports() {
       setLines(ls);
       setReceipts(rs);
       setTrips(ts);
-      setProfile(((pr.data?.tax_profile ?? {}) as TaxProfile));
-      setHasDescription(!!pr.data?.business_description?.trim());
+      const b = businesses.find((x) => x.id === biz);
+      // Each business keeps its own write-off answers; "all" / unassigned use the account's.
+      setProfile(((b ? b.tax_profile : pr.data?.tax_profile) ?? {}) as TaxProfile);
+      setHasDescription(!!(b?.description?.trim() || pr.data?.business_description?.trim()));
+      if (businesses.length && biz !== "none") {
+        let uq = supabase.from("receipts").select("id", { count: "exact", head: true }).eq("user_id", accountId()).is("business_id", null);
+        if (range) uq = uq.gte("purchase_date", range[0]).lte("purchase_date", range[1]);
+        setUnassigned((await uq).count ?? 0);
+      } else setUnassigned(0);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [year]);
+  }, [year, biz, businesses]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -101,20 +120,36 @@ export default function Reports() {
     setProfile(next);
     // View-only members can try what-ifs; nothing is saved to the account.
     if (!canEdit) return;
-    const { error } = await supabase.from("profiles").update({ tax_profile: next }).eq("user_id", accountId());
+    const { error } = business
+      ? await supabase.from("businesses").update({ tax_profile: next }).eq("id", business.id)
+      : await supabase.from("profiles").update({ tax_profile: next }).eq("user_id", accountId());
     if (error) setError(error.message);
-  }, [canEdit]);
+  }, [canEdit, business]);
 
   const suggested = useMemo(
     () => (receipts ? suggestTrips(receipts, trips, profile.store_miles ?? {}) : []),
     [receipts, trips, profile.store_miles],
   );
   const needsYear = (tab === "writeoffs" || tab === "mileage") && year === "all";
+  // Each business files its own return, so write-offs and mileage need one picked.
+  const needsBusiness = (tab === "writeoffs" || tab === "mileage") && active.length > 1 && biz === "all";
 
   return (
     <div className="stack">
       <div className="page-head row-between">
         <h1>Reports</h1>
+        <div className="row-wrap">
+        {!!businesses?.length && (
+          <label className="inline-select">
+            <span className="muted small">Business</span>
+            <select value={biz} onChange={(e) => setParam("biz", e.target.value)}>
+              {active.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              {businesses.filter((b) => b.archived_at).map((b) => <option key={b.id} value={b.id}>{b.name} (archived)</option>)}
+              <option value="all">All businesses</option>
+              <option value="none">Not assigned</option>
+            </select>
+          </label>
+        )}
         <label className="inline-select">
           <span className="muted small">Period</span>
           <select value={year} onChange={(e) => setParam("year", e.target.value)}>
@@ -122,7 +157,22 @@ export default function Reports() {
             <option value="all">All time</option>
           </select>
         </label>
+        </div>
       </div>
+
+      {unassigned > 0 && (
+        <p className="banner warn">
+          {unassigned} receipt{unassigned === 1 ? " isn't" : "s aren't"} assigned to a business{year !== "all" ? ` in ${year}` : ""} — they're
+          left out of each business's numbers. <Link to="/receipts?business=none">Review them</Link> or set card/store rules in{" "}
+          <Link to="/settings#businesses">Settings → Businesses</Link>.
+        </p>
+      )}
+      {business && !usesScheduleC(business) && (tab === "writeoffs") && (
+        <p className="banner warn">
+          {business.name} files {ENTITY_FORM[business.entity_type] || "its own return"}, not Schedule C. The write-off finder uses Schedule C
+          lines — use it to organise expenses and give the export to your tax professional.
+        </p>
+      )}
 
       <div className="tabs" role="tablist">
         {TABS.map(([k, label]) => (
@@ -135,19 +185,21 @@ export default function Reports() {
       {error && <p className="error">{error}</p>}
       {needsYear ? (
         <p className="muted">Write-offs follow each tax year’s rules — pick a year above.</p>
+      ) : needsBusiness ? (
+        <p className="muted">Each business files its own return — pick a business above.</p>
       ) : !lines || !receipts ? <p className="muted">Loading…</p> : tab === "writeoffs" ? (
         <WriteOffs year={Number(year)} lines={lines as unknown as WLine[]} trips={trips} suggested={suggested}
           profile={profile} saveProfile={saveProfile} reload={load} openTab={(t) => setParam("tab", t)}
-          hasBusinessDescription={hasDescription} />
+          hasBusinessDescription={hasDescription} business={business ? { id: business.id, name: business.name } : undefined} />
       ) : tab === "mileage" ? (
         <Mileage year={Number(year)} receipts={receipts} trips={trips} suggested={suggested}
-          profile={profile} saveProfile={saveProfile} reload={load} />
+          profile={profile} saveProfile={saveProfile} reload={load} businessId={business?.id} />
       ) : tab === "inventory" ? (
         <Inventory lines={lines} year={year} />
       ) : (
         <>
           <Exporter lines={lines} receipts={receipts} year={year} />
-          <IrsExport year={year} />
+          <IrsExport year={year} business={biz === "all" ? undefined : biz} businessName={business?.name} />
         </>
       )}
     </div>

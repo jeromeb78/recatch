@@ -134,7 +134,9 @@ declare
   t text;
 begin
   foreach t in array array['profiles', 'categories', 'email_connections', 'receipts', 'line_items', 'trips',
-                           'processed_messages', 'api_tokens', 'oauth_tokens', 'account_members', 'account_invites'] loop
+                           'processed_messages', 'api_tokens', 'oauth_tokens', 'account_members', 'account_invites',
+                           'businesses'] loop
+    continue when to_regclass('public.' || t) is null; -- businesses: only once that migration ran
     execute format('drop policy if exists "two-step sign-in" on public.%I', t);
     execute format(
       'create policy "two-step sign-in" on public.%I as restrictive for all to authenticated
