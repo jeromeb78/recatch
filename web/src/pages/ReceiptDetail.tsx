@@ -7,6 +7,10 @@ import { SOURCE_LABEL } from "../lib/merchant";
 import { TAX_LINES, USE_LABEL } from "../lib/tax";
 import type { LineItem, Receipt } from "../lib/types";
 import { accountId, useAccount } from "../lib/account";
+import { irsFilesFor, saveBlob } from "../lib/receiptImage";
+import { recordFileName } from "../lib/receiptRecord";
+import { makeZip } from "../lib/zip";
+import { useBusinesses } from "../lib/businesses";
 
 type Draft = Omit<LineItem, "id" | "receipt_id"> & { id?: string };
 
@@ -19,6 +23,8 @@ export default function ReceiptDetail() {
   const navigate = useNavigate();
   const { categories } = useCategories();
   const readOnly = !useAccount().can("receipts", "edit");
+  const { active: businesses } = useBusinesses();
+  const split = businesses.length > 1;
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [items, setItems] = useState<Draft[]>([]);
   const [removed, setRemoved] = useState<string[]>([]);
@@ -82,6 +88,7 @@ export default function ReceiptDetail() {
           currency: receipt.currency,
           payment_method: receipt.payment_method,
           category_id: receipt.category_id,
+          business_id: receipt.business_id ?? null,
           notes: receipt.notes,
           ...(markReviewed ? { status: "ready", review_reasons: [] } : {}),
         })
@@ -108,6 +115,7 @@ export default function ReceiptDetail() {
         tax_line: it.tax_line || null,
         use_type: it.use_type || null,
         business_pct: it.use_type === "mixed" ? it.business_pct ?? null : null,
+        business_id: it.business_id ?? null,
         tax_confidence: it.tax_confidence,
       }));
       const existing = rows.filter((r) => "id" in r);
@@ -132,6 +140,23 @@ export default function ReceiptDetail() {
     }
   }
 
+  async function downloadForIrs() {
+    if (!receipt) return;
+    setMessage({ kind: "ok", text: "Making the image…" });
+    try {
+      // Uses the saved version; unsaved edits on this page aren't included.
+      const files = await irsFilesFor(receipt);
+      if (files.length === 1) saveBlob(files[0].name, files[0].blob);
+      else {
+        const entries = await Promise.all(files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) })));
+        saveBlob(recordFileName(receipt, undefined, "zip"), new Blob([makeZip(entries)], { type: "application/zip" }));
+      }
+      setMessage({ kind: "ok", text: files.length === 1 ? "Downloaded." : `Downloaded ${files.length} files (ZIP).` });
+    } catch (e) {
+      setMessage({ kind: "error", text: (e as Error).message });
+    }
+  }
+
   async function remove() {
     if (!receipt || !confirm("Delete this receipt and its stored files?")) return;
     const paths = (receipt.files ?? []).map((f) => f.path);
@@ -143,7 +168,10 @@ export default function ReceiptDetail() {
 
   return (
     <div className="detail">
-      <p><Link to="/receipts">← All receipts</Link></p>
+      <div className="row-between">
+        <p><Link to="/receipts">← All receipts</Link></p>
+        <button className="btn sm" onClick={downloadForIrs} title="JPG of this receipt with its items and the original, for tax records">Download for IRS (JPG)</button>
+      </div>
       {readOnly && <p className="banner warn">View only — you can't change receipts in this account.</p>}
 
       <fieldset className="plain" disabled={readOnly}>
@@ -177,6 +205,15 @@ export default function ReceiptDetail() {
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.name}{c.is_business ? " (business)" : ""}</option>)}
               </select>
             </label>
+            {businesses.length > 0 && (
+              <label>
+                Business
+                <select value={receipt.business_id ?? ""} onChange={(e) => set("business_id", e.target.value || null)}>
+                  <option value="">None (personal / unassigned)</option>
+                  {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </label>
+            )}
             <label>Payment<input value={receipt.payment_method ?? ""} onChange={(e) => set("payment_method", e.target.value || null)} /></label>
             {(["subtotal", "discount", "shipping", "tax", "total"] as const).map((k) => (
               <label key={k} className="cap">
@@ -230,6 +267,7 @@ export default function ReceiptDetail() {
                 <th>Woo SKU</th>
                 <th>Tax line</th>
                 <th>Use</th>
+                {split && <th title="Allocate a single item to a different business than the receipt">Business</th>}
                 <th />
               </tr>
             </thead>
@@ -271,6 +309,14 @@ export default function ReceiptDetail() {
                       </label>
                     )}
                   </td>
+                  {split && (
+                    <td>
+                      <select value={it.business_id ?? ""} onChange={(e) => setItem(i, { business_id: e.target.value || null })} aria-label="Business for this item">
+                        <option value="">(receipt's)</option>
+                        {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      </select>
+                    </td>
+                  )}
                   <td>
                     <button
                       className="link danger"
@@ -293,12 +339,12 @@ export default function ReceiptDetail() {
                       setItems([...items, {
                         position: items.length, description: "", store_sku: null, quantity: 1,
                         unit_price: null, total: null, category_id: null, woo_sku: null,
-                        pack_size: 1, tax_line: null, use_type: null, tax_confidence: null, business_pct: null,
+                        pack_size: 1, tax_line: null, use_type: null, tax_confidence: null, business_pct: null, business_id: null,
                       }])}
                   >+ Add line</button>
                 </td>
                 <td className="num"><strong>{money(itemsSum, receipt.currency)}</strong></td>
-                <td colSpan={5} className="muted small">
+                <td colSpan={split ? 6 : 5} className="muted small">
                   {receipt.subtotal != null && Math.abs(itemsSum - Number(receipt.subtotal)) > 0.05 &&
                     `Subtotal is ${money(receipt.subtotal, receipt.currency)}`}
                 </td>

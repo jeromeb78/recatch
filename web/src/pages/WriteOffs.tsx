@@ -21,11 +21,13 @@ interface Props {
   reload: () => void;
   openTab: (tab: "mileage") => void;
   hasBusinessDescription: boolean;
+  /** The business these write-offs are for, when the account has several. */
+  business?: { id: string; name: string };
 }
 
 const LINE_ORDER = ["cogs", "c8", "c9", "c10", "c13", "c15", "c17", "c18", "c20b", "c21", "c22", "c23", "c24a", "c24b", "c25", "c27a", "c30", "uncat"];
 
-export default function WriteOffs({ year, lines, trips, suggested, profile, saveProfile, reload, openTab, hasBusinessDescription }: Props) {
+export default function WriteOffs({ year, lines, trips, suggested, profile, saveProfile, reload, openTab, hasBusinessDescription, business }: Props) {
   const rules = rulesFor(year);
   const readOnly = !useAccount().can("reports", "edit");
   const inputs: YearInputs = profile.years?.[String(year)] ?? {};
@@ -65,7 +67,7 @@ export default function WriteOffs({ year, lines, trips, suggested, profile, save
   return (
     <>
       <section className="card hero">
-        <span className="eyebrow">Estimated write-offs for {year} · {SCENARIO_INFO[scenario].label}</span>
+        <span className="eyebrow">Estimated write-offs for {business ? `${business.name} · ` : ""}{year} · {SCENARIO_INFO[scenario].label}</span>
         <span className="big-number">{money(chosen.total)}</span>
         <span className="muted small">
           Schedule C business expenses and cost of goods sold, using {year} IRS rules
@@ -98,7 +100,7 @@ export default function WriteOffs({ year, lines, trips, suggested, profile, save
         </div>
       </section>
 
-      <Opportunities ops={ops} lines={lines} reload={reload} openTab={openTab} />
+      <Opportunities ops={ops} lines={lines} reload={reload} openTab={openTab} business={business} />
 
       <section>
         <div className="section-head"><h2>By Schedule C line</h2></div>
@@ -146,7 +148,7 @@ export default function WriteOffs({ year, lines, trips, suggested, profile, save
 
 /* ---------------- missed write-offs ---------------- */
 
-function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; lines: WLine[]; reload: () => void; openTab: (t: "mileage") => void }) {
+function Opportunities({ ops, lines, reload, openTab, business }: { ops: Opportunity[]; lines: WLine[]; reload: () => void; openTab: (t: "mileage") => void; business?: { id: string; name: string } }) {
   const [open, setOpen] = useState<string | null>(null);
   const [unticked, setUnticked] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
@@ -160,7 +162,7 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
   const potential = actionable.reduce((a, o) => a + (o.value ?? 0), 0);
 
   async function invoke(body: Record<string, unknown>) {
-    const { data, error } = await supabase.functions.invoke("categorize-items", { body: { ...body, account: accountId() } });
+    const { data, error } = await supabase.functions.invoke("categorize-items", { body: { ...body, account: accountId(), business: business?.id } });
     if (error) {
       const b = await (error as { context?: Response }).context?.json?.().catch(() => null);
       throw new Error(b?.error ?? error.message);
@@ -205,7 +207,10 @@ function Opportunities({ ops, lines, reload, openTab }: { ops: Opportunity[]; li
   const saveDescription = () => run(async () => {
     const text = description.trim();
     if (!text) throw new Error("Describe what you sell first.");
-    const { error } = await supabase.from("profiles").update({ business_description: text }).eq("user_id", accountId());
+    // With several businesses, each has its own description; otherwise it's the account's.
+    const { error } = business
+      ? await supabase.from("businesses").update({ description: text }).eq("id", business.id)
+      : await supabase.from("profiles").update({ business_description: text }).eq("user_id", accountId());
     if (error) throw new Error(error.message);
     setRunning(false);
     await recheck();

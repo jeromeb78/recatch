@@ -13,7 +13,7 @@ export interface ReceiptFile {
 
 export interface Receipt {
   id: string;
-  source: "gmail" | "forward" | "upload" | "extension";
+  source: "gmail" | "forward" | "upload" | "extension" | "claude";
   source_url?: string | null;
   status: "ready" | "needs_review";
   review_reasons: string[];
@@ -35,6 +35,7 @@ export interface Receipt {
   email_from: string | null;
   files: ReceiptFile[];
   created_at: string;
+  business_id?: string | null;
 }
 
 export interface LineItem {
@@ -53,6 +54,7 @@ export interface LineItem {
   use_type: "business" | "personal" | "mixed" | null;
   tax_confidence: number | null;
   business_pct: number | null;
+  business_id?: string | null;
 }
 
 export interface Connection {
