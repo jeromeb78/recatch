@@ -7,6 +7,9 @@ import { SOURCE_LABEL } from "../lib/merchant";
 import { TAX_LINES, USE_LABEL } from "../lib/tax";
 import type { LineItem, Receipt } from "../lib/types";
 import { accountId, useAccount } from "../lib/account";
+import { irsFilesFor, saveBlob } from "../lib/receiptImage";
+import { recordFileName } from "../lib/receiptRecord";
+import { makeZip } from "../lib/zip";
 
 type Draft = Omit<LineItem, "id" | "receipt_id"> & { id?: string };
 
@@ -132,6 +135,23 @@ export default function ReceiptDetail() {
     }
   }
 
+  async function downloadForIrs() {
+    if (!receipt) return;
+    setMessage({ kind: "ok", text: "Making the image…" });
+    try {
+      // Uses the saved version; unsaved edits on this page aren't included.
+      const files = await irsFilesFor(receipt);
+      if (files.length === 1) saveBlob(files[0].name, files[0].blob);
+      else {
+        const entries = await Promise.all(files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) })));
+        saveBlob(recordFileName(receipt, undefined, "zip"), new Blob([makeZip(entries)], { type: "application/zip" }));
+      }
+      setMessage({ kind: "ok", text: files.length === 1 ? "Downloaded." : `Downloaded ${files.length} files (ZIP).` });
+    } catch (e) {
+      setMessage({ kind: "error", text: (e as Error).message });
+    }
+  }
+
   async function remove() {
     if (!receipt || !confirm("Delete this receipt and its stored files?")) return;
     const paths = (receipt.files ?? []).map((f) => f.path);
@@ -143,7 +163,10 @@ export default function ReceiptDetail() {
 
   return (
     <div className="detail">
-      <p><Link to="/receipts">← All receipts</Link></p>
+      <div className="row-between">
+        <p><Link to="/receipts">← All receipts</Link></p>
+        <button className="btn sm" onClick={downloadForIrs} title="JPG of this receipt with its items and the original, for tax records">Download for IRS (JPG)</button>
+      </div>
       {readOnly && <p className="banner warn">View only — you can't change receipts in this account.</p>}
 
       <fieldset className="plain" disabled={readOnly}>

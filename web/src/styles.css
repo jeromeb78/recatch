@@ -550,3 +550,4 @@ input.otp { font-family: "Geist Mono", monospace; font-size: 22px; letter-spacin
 .enroll-steps { margin: 0; padding-left: 1.2rem; color: var(--muted); }
 .require-mfa { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 12px; font-size: 14px; }
 .require-mfa input { margin-top: 3px; }
+.guide-list { margin: 8px 0 0; padding-left: 1.2rem; display: grid; gap: 6px; color: var(--muted); }

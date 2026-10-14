@@ -13,7 +13,7 @@ export interface ReceiptFile {
 
 export interface Receipt {
   id: string;
-  source: "gmail" | "forward" | "upload" | "extension";
+  source: "gmail" | "forward" | "upload" | "extension" | "claude";
   source_url?: string | null;
   status: "ready" | "needs_review";
   review_reasons: string[];

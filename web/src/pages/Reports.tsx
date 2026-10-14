@@ -13,6 +13,7 @@ import {
 } from "../lib/exports";
 import { DownloadIcon } from "../components/Icons";
 import { accountId, useAccount } from "../lib/account";
+import { IrsExport } from "../components/IrsExport";
 
 interface InvLine extends ExportLine, Omit<WLine, keyof ExportLine | "quantity"> {
   id: string;
@@ -144,7 +145,10 @@ export default function Reports() {
       ) : tab === "inventory" ? (
         <Inventory lines={lines} year={year} />
       ) : (
-        <Exporter lines={lines} receipts={receipts} year={year} />
+        <>
+          <Exporter lines={lines} receipts={receipts} year={year} />
+          <IrsExport year={year} />
+        </>
       )}
     </div>
   );

@@ -243,6 +243,17 @@ in row-level security (migration `team`), invite tokens are stored only as SHA-2
 remove team management, and nobody can change their own access. `process-upload` and `categorize-items` take an optional
 `account` (owner id) and check the caller's access before acting on it.
 
+## Receipt images for the IRS
+
+Every receipt has **Download for IRS (JPG)**, and Reports → Export has **Receipt images for the IRS**, which downloads a
+year as a ZIP. Each JPG is a US-letter page (150 dpi) with the store, date, order number, payment (last 4 only),
+each item with its business use, and the totals. Below that is the **original document exactly as captured**: the
+photo, the email, or the text of the store's order page. Long receipts continue onto more pages, and original PDFs are
+included unchanged. The ZIP holds folders of at most 40 files (the IRS Document Upload Tool takes JPG/PNG/PDF,
+15 MB each, 40 per upload), plus `index.csv` and a README. Everything is drawn in the browser; nothing is uploaded.
+
+Receipts aren't sent with a tax return. Keep them, and send only what an IRS letter or auditor asks for.
+
 ## Getting in-store receipts by email
 
 - **Target:** In-store purchases linked to your Target Circle account appear in the app's purchase history. Target can email receipts at checkout, and those emails are picked up by Gmail sync.
