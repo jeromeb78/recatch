@@ -15,6 +15,7 @@ Deno.test("maps a paid order with refunds, fees and no customer data", () => {
   assertEquals(m?.order, {
     external_id: "812", order_number: "812", order_date: "2026-08-02", status: "paid", currency: "USD",
     items_total: 45, discount: 5, shipping_charged: 6.95, tax_collected: 2.1, refunded: 10, fees: 1.87, total: 54.05,
+    payment_method: null, payment_ref: null,
   });
   assertEquals(m?.lines, [{ sku: "HW-67", name: "Hot Wheels '67 Camaro", quantity: 2, total: 30 }, { sku: null, name: "Mystery box", quantity: 1, total: 15 }]);
   assertEquals(JSON.stringify(m).includes("Pat") || JSON.stringify(m).includes("x@y.z"), false);
@@ -47,4 +48,11 @@ Deno.test("keys", () => {
   assertEquals(validKeys("ck_" + "a".repeat(40), "cs_" + "b".repeat(40)), true);
   assertEquals(validKeys("cs_" + "a".repeat(40), "ck_" + "b".repeat(40)), false);
   assertEquals(validKeys("ck_short", "cs_short"), false);
+});
+
+Deno.test("payment reference for matching to Stripe", () => {
+  const base = { id: 9, status: "completed", date_created: "2026-01-02T00:00:00", payment_method: "stripe" };
+  assertEquals(mapOrder({ ...base, transaction_id: "ch_123" })?.order.payment_ref, "ch_123");
+  assertEquals(mapOrder({ ...base, transaction_id: "", meta_data: [{ key: "_stripe_intent_id", value: "pi_9" }] })?.order.payment_ref, "pi_9");
+  assertEquals(mapOrder({ ...base })?.order.payment_method, "stripe");
 });

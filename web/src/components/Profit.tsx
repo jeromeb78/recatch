@@ -5,7 +5,8 @@ import { accountId, useAccount } from "../lib/account";
 import { money, relative } from "../lib/format";
 import { download, toCsv } from "../lib/csv";
 import { buildPnl, onHand, skuKey, type PBuyLine, type POrder, type PSaleLine, type PTrip, type Pnl } from "../lib/pnl";
-import { refreshStale, useChannels } from "../lib/sales";
+import { refreshStale, useChannels, usePaymentAccounts, type Channel, type PaymentAccount } from "../lib/sales";
+import { inScope, reconcile, type Reconciliation, type ROrder, type RPayment } from "../lib/reconcile";
 import { candidatesFrom, suggest, type Candidate } from "../lib/skuMatch";
 import type { TaxProfile } from "../lib/writeoffs";
 import { DownloadIcon } from "./Icons";
@@ -25,7 +26,9 @@ const pct = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%
 const short = (v: number) => (Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(Math.abs(v) >= 10000 ? 0 : 1)}k` : `$${Math.round(v)}`);
 
 interface SalesData {
-  orders: POrder[];
+  /** Every order in the account (scoped after Stripe reconciliation, since a charge may match any of them). */
+  orders: ROrder[];
+  payments: RPayment[];
   lines: PSaleLine[];
   inventoryBuys: PBuyLine[];
   unskued: PBuyLine[];
@@ -43,10 +46,13 @@ function useSalesData(biz: string, to: string, enabled: boolean) {
       return biz === "all" ? q : biz === "none" ? b.is(col, null) : b.eq(col, biz);
     };
     try {
-      const [orders, lines, inventoryBuys, unskued, products] = await Promise.all([
-        enabled ? fetchAll<POrder>((a, b) => scope(supabase.from("sales_orders")
-          .select("id, order_date, status, items_total, shipping_charged, tax_collected, refunded, fees, channel_id")
-          .eq("user_id", accountId()).lte("order_date", to)).order("order_date").range(a, b)) : [],
+      const [orders, payments, lines, inventoryBuys, unskued, products] = await Promise.all([
+        enabled ? fetchAll<ROrder>((a, b) => supabase.from("sales_orders")
+          .select("id, order_date, status, items_total, shipping_charged, tax_collected, refunded, fees, channel_id, external_id, order_number, business_id, payment_method, payment_ref")
+          .eq("user_id", accountId()).lte("order_date", to).order("order_date").range(a, b)) : [],
+        enabled ? fetchAll<RPayment>((a, b) => supabase.from("payments")
+          .select("id, account_id, external_id, payment_intent, payment_date, status, amount, refunded, fee, disputed, description, order_ref, site_url")
+          .eq("user_id", accountId()).lte("payment_date", to).order("payment_date").range(a, b)) : [],
         enabled ? fetchAll<PSaleLine>((a, b) => scope(supabase.from("sales_lines")
           .select("order_id, sku, name, quantity, total, sales_orders!inner(business_id, order_date)")
           .eq("user_id", accountId()).lte("sales_orders.order_date", to), "sales_orders.business_id").order("id").range(a, b)) : [],
@@ -59,7 +65,7 @@ function useSalesData(biz: string, to: string, enabled: boolean) {
         enabled ? fetchAll<Candidate & { stock: number | null }>((a, b) => supabase.from("sales_products").select("sku, name, stock")
           .eq("user_id", accountId()).order("sku").range(a, b)) : [],
       ]);
-      setData({ orders, lines, inventoryBuys, unskued, products });
+      setData({ orders, payments, lines, inventoryBuys, unskued, products });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -79,41 +85,47 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
   const { can } = useAccount();
   const canEditReports = can("reports", "edit");
   const { channels, reload: reloadChannels } = useChannels();
+  const { accounts, reload: reloadAccounts } = usePaymentAccounts();
   const from = year === "all" ? "1900-01-01" : `${year}-01-01`;
   const today = new Date().toISOString().slice(0, 10);
   const to = year === "all" ? today : `${year}-12-31` < today ? `${year}-12-31` : today;
   const yearEnd = year === "all" ? today : `${year}-12-31`;
-  const { data, error, reload } = useSalesData(biz, to, !!channels?.length);
+  const connected = !!channels?.length || !!accounts?.length;
+  const { data, error, reload } = useSalesData(biz, to, connected);
   const [syncing, setSyncing] = useState(false);
 
   // Bring connected stores up to date when the tab opens (at most hourly).
   useEffect(() => {
-    if (!channels?.length || !canEditReports) return;
+    if (!channels || !accounts || !connected || !canEditReports) return;
     let gone = false;
     setSyncing(true);
-    refreshStale(channels).then((changed) => {
+    refreshStale(channels, accounts).then((changed) => {
       if (gone) return;
       setSyncing(false);
-      if (changed) { reload(); reloadChannels(); }
+      if (changed) { reload(); reloadChannels(); reloadAccounts(); }
     });
     return () => { gone = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channels?.length]);
+  }, [channels?.length, accounts?.length]);
 
-  const pnl = useMemo(() => data && buildPnl({ from, to, orders: data.orders, saleLines: data.lines, inventoryBuys: data.inventoryBuys, periodBuys, trips }),
-    [data, from, to, periodBuys, trips]);
+  // Stripe decides what was charged, refunded and paid in fees; then keep this business's orders.
+  const rec = useMemo<Reconciliation | null>(() => data && accounts?.length && channels
+    ? reconcile({ orders: data.orders, payments: data.payments, channels, accounts }) : null, [data, accounts, channels]);
+  const orders = useMemo<POrder[]>(() => (data ? inScope(rec ? rec.orders : data.orders, biz) : []), [data, rec, biz]);
+  const pnl = useMemo(() => data && buildPnl({ from, to, orders, saleLines: data.lines, inventoryBuys: data.inventoryBuys, periodBuys, trips }),
+    [data, orders, from, to, periodBuys, trips]);
   const stock = useMemo(() => {
     if (!data) return null;
     const m = new Map<string, number>();
     for (const p of data.products) if (p.stock != null) m.set(skuKey(p.sku), (m.get(skuKey(p.sku)) ?? 0) + Number(p.stock));
-    return onHand({ asOf: to, inventoryBuys: data.inventoryBuys, orders: data.orders, saleLines: data.lines, storeStock: m });
-  }, [data, to]);
+    return onHand({ asOf: to, inventoryBuys: data.inventoryBuys, orders, saleLines: data.lines, storeStock: m });
+  }, [data, orders, to]);
 
   if (error) return <p className="error">{error}</p>;
-  if (!channels || !data || !pnl || !stock) return <p className="muted">Loading…</p>;
+  if (!channels || !accounts || !data || !pnl || !stock) return <p className="muted">Loading…</p>;
 
-  const errored = channels.filter((c) => c.status === "error");
-  const noSales = channels.length === 0;
+  const errored: (Channel | PaymentAccount)[] = [...channels, ...accounts].filter((c) => c.status === "error");
+  const noSales = !connected;
 
   return (
     <div className="stack profit">
@@ -160,6 +172,10 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
         </section>
       </div>
 
+      {rec ? <StripeCheck rec={rec} from={from} to={to} biz={biz} /> : channels.some((c) => c.kind === "woocommerce") && canEditReports && (
+        <p className="banner">Stripe takes your store's payments? <Link to="/settings#sales">Connect Stripe</Link> so refunds, fees and
+          failed payments come from Stripe, the source of truth for money.</p>
+      )}
       <Products pnl={pnl} year={year} />
       <ScheduleC pnl={pnl} year={year} biz={biz} onHandValue={stock.value} profile={profile} saveProfile={saveProfile} canEdit={canEditReports} />
       <OnHand stock={stock} asOf={yearEnd} />
@@ -170,6 +186,56 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
         {channels.filter((c) => c.kind === "woocommerce" && c.last_synced_at).map((c) => ` ${c.name} synced ${relative(c.last_synced_at)}.`)}
       </p>
     </div>
+  );
+}
+
+/** How store orders line up with Stripe, for the period. */
+function StripeCheck({ rec, from, to, biz }: { rec: Reconciliation; from: string; to: string; biz: string }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const within = <T extends { date: string; business_id: string | null }>(xs: T[]) => inScope(xs, biz).filter((x) => x.date >= from && x.date <= to);
+  const only = within(rec.stripeOnly);
+  const missing = within(rec.missingInStripe);
+  const diffs = within(rec.amountDiffs);
+  const statuses = within(rec.statusDiffs);
+  const matched = within(rec.matched).length;
+  const items: { key: string; label: string; detail: string; rows: string[] }[] = [
+    { key: "only", label: `${only.length} Stripe payment${only.length === 1 ? "" : "s"} with no store order`,
+      detail: "Counted as sales from Stripe — payment links, invoices or orders from a store that isn't connected.",
+      rows: only.map((x) => `${x.date} · ${money(x.amount)} · ${x.description ?? x.id}`) },
+    { key: "missing", label: `${missing.length} store order${missing.length === 1 ? "" : "s"} paid by Stripe with no Stripe charge`,
+      detail: "The store's numbers are used for these. Check them in Stripe — the payment may have failed or been made in another account.",
+      rows: missing.map((x) => `#${x.number} · ${x.date} · ${money(x.total)}`) },
+    { key: "diffs", label: `${diffs.length} order${diffs.length === 1 ? "" : "s"} where the store total differs from what Stripe charged`,
+      detail: "Stripe's amount is used.", rows: diffs.map((x) => `#${x.number} · ${x.date} · store ${money(x.store)} vs Stripe ${money(x.stripe)}`) },
+    { key: "status", label: `${statuses.length} order${statuses.length === 1 ? "" : "s"} where the store's status disagrees with Stripe`,
+      detail: "Stripe's outcome is used (for example the store says paid but Stripe refunded it).",
+      rows: statuses.map((x) => `#${x.number} · store says ${x.store}, Stripe says ${x.stripe}`) },
+  ].filter((i) => i.rows.length);
+  return (
+    <section className="card stripe-check">
+      <div className="row-between"><h2>Checked against Stripe</h2>
+        <span className={`pill ${items.length ? "warn" : "ok"}`}>{items.length ? `${items.length} to look at` : "All matched"}</span></div>
+      <p className="muted small">
+        {matched.toLocaleString()} store orders matched to Stripe charges. Sales, refunds and fees
+        come from Stripe; items and sales tax come from the store.{rec.disputed > 0 && ` ${rec.disputed} charge${rec.disputed === 1 ? " was" : "s were"} disputed — check them in Stripe.`}
+      </p>
+      {items.length > 0 && (
+        <ul className="check-list">
+          {items.map((i) => (
+            <li key={i.key}>
+              <button className="link" onClick={() => setOpen(open === i.key ? null : i.key)} aria-expanded={open === i.key}>{i.label}</button>
+              {open === i.key && (
+                <>
+                  <p className="muted small">{i.detail}</p>
+                  <ul className="mono small">{i.rows.slice(0, 50).map((r) => <li key={r}>{r}</li>)}</ul>
+                  {i.rows.length > 50 && <p className="muted small">…and {i.rows.length - 50} more</p>}
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
