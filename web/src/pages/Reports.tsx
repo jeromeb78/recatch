@@ -15,6 +15,8 @@ import { DownloadIcon } from "../components/Icons";
 import { accountId, useAccount } from "../lib/account";
 import { IrsExport } from "../components/IrsExport";
 import { ENTITY_FORM, useBusinesses, usesScheduleC } from "../lib/businesses";
+import { Profit } from "../components/Profit";
+import type { PBuyLine } from "../lib/pnl";
 
 interface InvLine extends ExportLine, Omit<WLine, keyof ExportLine | "quantity"> {
   id: string;
@@ -23,8 +25,8 @@ interface InvLine extends ExportLine, Omit<WLine, keyof ExportLine | "quantity">
   category: string | null;
 }
 
-type Tab = "writeoffs" | "mileage" | "inventory" | "export";
-const TABS: [Tab, string][] = [["writeoffs", "Write-offs"], ["mileage", "Mileage"], ["inventory", "Inventory & COGS"], ["export", "Export"]];
+type Tab = "profit" | "writeoffs" | "mileage" | "inventory" | "export";
+const TABS: [Tab, string][] = [["profit", "Profit"], ["writeoffs", "Write-offs"], ["mileage", "Mileage"], ["inventory", "Inventory & COGS"], ["export", "Export"]];
 const PAGE = 1000;
 
 function yearRange(year: string): [string, string] | null {
@@ -44,7 +46,7 @@ async function fetchAll<T>(make: (from: number, to: number) => PromiseLike<{ dat
 export default function Reports() {
   const [params, setParams] = useSearchParams();
   const raw = params.get("tab");
-  const tab: Tab = raw === "taxes" ? "writeoffs" : TABS.some(([k]) => k === raw) ? (raw as Tab) : "writeoffs";
+  const tab: Tab = raw === "taxes" ? "writeoffs" : TABS.some(([k]) => k === raw) ? (raw as Tab) : "profit";
   const thisYear = new Date().getFullYear();
   const year = params.get("year") || String(thisYear);
   const setParam = (k: string, v: string) => {
@@ -187,7 +189,9 @@ export default function Reports() {
         <p className="muted">Write-offs follow each tax year’s rules — pick a year above.</p>
       ) : needsBusiness ? (
         <p className="muted">Each business files its own return — pick a business above.</p>
-      ) : !lines || !receipts ? <p className="muted">Loading…</p> : tab === "writeoffs" ? (
+      ) : !lines || !receipts ? <p className="muted">Loading…</p> : tab === "profit" ? (
+        <Profit year={year} biz={biz} periodBuys={lines as unknown as PBuyLine[]} trips={trips} profile={profile} saveProfile={saveProfile} />
+      ) : tab === "writeoffs" ? (
         <WriteOffs year={Number(year)} lines={lines as unknown as WLine[]} trips={trips} suggested={suggested}
           profile={profile} saveProfile={saveProfile} reload={load} openTab={(t) => setParam("tab", t)}
           hasBusinessDescription={hasDescription} business={business ? { id: business.id, name: business.name } : undefined} />

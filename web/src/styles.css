@@ -649,3 +649,51 @@ button.store-bar:hover { background: var(--hairline); }
   .store-bar { grid-template-columns: minmax(70px, 1fr) minmax(50px, 1.4fr) auto; }
 }
 .legend { justify-content: flex-start; }
+
+/* ---------------- Profit & sales ---------------- */
+.profit, .profit > *, .profit .analytics-grid > .card { min-width: 0; }
+.neg { color: var(--danger); }
+.month-chart .grid.zero { stroke: var(--muted); stroke-opacity: 0.5; }
+.gap-chip.muted { background: var(--hairline); border-color: var(--hairline); color: var(--muted); }
+.empty-profit { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.empty-profit h2, .empty-profit p { margin: 0; }
+.waterfall { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.waterfall li { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(80px, 2fr) auto; gap: 10px; align-items: center; font-size: 14px; }
+.waterfall .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.waterfall .track { position: relative; height: 14px; }
+.waterfall .bar { position: absolute; top: 0; height: 14px; border-radius: 3px; }
+.waterfall .bar.in { background: var(--series-1); }
+.waterfall .bar.out { background: var(--series-2); }
+.waterfall .bar.total { background: var(--series-3); }
+.waterfall .bar.neg { background: var(--danger); }
+.waterfall .zero { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--muted); opacity: 0.5; }
+.waterfall li.total { border-top: 1px solid var(--hairline); padding-top: 6px; font-weight: 600; }
+.waterfall .val { font-size: 13px; text-align: right; }
+.sched { margin: 8px 0 0; display: grid; gap: 6px; }
+.sched > div { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; border-bottom: 1px solid var(--hairline); padding: 6px 0; }
+.sched dt { font-size: 14px; }
+.sched dt .pill { margin: 0 6px 0 0; }
+.sched dd { margin: 0; font-weight: 600; }
+.match-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; }
+.match-list li { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--hairline); flex-wrap: wrap; }
+.match-list .grow { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; }
+.match-list input { width: 160px; }
+.profit-tile { display: flex; flex-direction: column; gap: 4px; color: var(--text); }
+.profit-tile:hover { color: var(--text); outline: 1px solid var(--border); }
+.channel-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; }
+.channel { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+.channel .grow { min-width: 0; }
+.channel .banner { margin: 0; }
+.sales-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hairline); }
+.sales-form h3 { margin: 0; }
+.help-steps { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; }
+.import-preview { display: grid; gap: 4px; padding: 12px 14px; border-radius: 12px; background: var(--bg); font-size: 14px; }
+@media (max-width: 520px) {
+  .waterfall li { grid-template-columns: minmax(80px, 1fr) minmax(60px, 1.3fr) auto; }
+  .match-list input { flex: 1; width: auto; }
+}
+.profit .actions .btn { white-space: normal; height: auto; padding-top: 6px; padding-bottom: 6px; text-align: left; max-width: 100%; }
+.profit .table-tools { flex-wrap: wrap; }
+.profit .table-tools h2 { margin: 0; font-size: 16px; }
+.profit .table-tools input[type=search] { min-width: 140px; }
+@media (max-width: 520px) { .profit .table-tools h2 { flex-basis: 100%; } }
