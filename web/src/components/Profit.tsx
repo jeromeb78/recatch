@@ -4,13 +4,15 @@ import { supabase } from "../lib/supabase";
 import { accountId, useAccount } from "../lib/account";
 import { money, relative } from "../lib/format";
 import { download, toCsv } from "../lib/csv";
-import { buildPnl, onHand, skuKey, type PBuyLine, type POrder, type PSaleLine, type PTrip, type Pnl } from "../lib/pnl";
+import { buildPnl, costBasis, onHand, skuKey, type PBuyLine, type POrder, type PSaleLine, type PTrip, type Pnl } from "../lib/pnl";
 import { refreshStale, useChannels, usePaymentAccounts, useShippingAccounts, type Channel, type PaymentAccount, type ShippingAccount } from "../lib/sales";
 import { reconcileShipping, type RShipment, type ShippingCheck } from "../lib/shipping";
 import { inScope, reconcile, type Reconciliation, type ROrder, type RPayment } from "../lib/reconcile";
 import { candidatesFrom, suggest, type Candidate } from "../lib/skuMatch";
 import type { TaxProfile } from "../lib/writeoffs";
 import { DownloadIcon } from "./Icons";
+import { CostSetup } from "./CostSetup";
+import { costResolver, poolStats, type CostPool, type SkuCost } from "../lib/costs";
 
 const PAGE = 1000;
 async function fetchAll<T>(make: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
@@ -34,7 +36,9 @@ interface SalesData {
   lines: PSaleLine[];
   inventoryBuys: PBuyLine[];
   unskued: PBuyLine[];
-  products: (Candidate & { stock: number | null })[];
+  products: (Candidate & { stock: number | null; cost: number | null })[];
+  pools: CostPool[];
+  skuCosts: SkuCost[];
 }
 
 /** Loads sales and the purchases that cost them for one business (or all / unassigned) up to `to`. */
@@ -48,7 +52,7 @@ function useSalesData(biz: string, to: string, enabled: boolean) {
       return biz === "all" ? q : biz === "none" ? b.is(col, null) : b.eq(col, biz);
     };
     try {
-      const [orders, payments, shipments, lines, inventoryBuys, unskued, products] = await Promise.all([
+      const [orders, payments, shipments, lines, inventoryBuys, unskued, products, pools, skuCosts] = await Promise.all([
         enabled ? fetchAll<ROrder>((a, b) => supabase.from("sales_orders")
           .select("id, order_date, status, items_total, shipping_charged, tax_collected, refunded, fees, channel_id, external_id, order_number, business_id, payment_method, payment_ref")
           .eq("user_id", accountId()).lte("order_date", to).order("order_date").range(a, b)) : [],
@@ -67,10 +71,16 @@ function useSalesData(biz: string, to: string, enabled: boolean) {
         fetchAll<PBuyLine>((a, b) => scope(supabase.from("inventory_lines")
           .select("id, description, woo_sku, units, quantity, landed_total, tax_line, use_type, business_pct, purchase_date")
           .eq("user_id", accountId()).is("woo_sku", null).eq("tax_line", "cogs")).order("purchase_date", { ascending: false }).range(a, b)),
-        enabled ? fetchAll<Candidate & { stock: number | null }>((a, b) => supabase.from("sales_products").select("sku, name, stock")
+        enabled ? fetchAll<Candidate & { stock: number | null; cost: number | null }>((a, b) => supabase.from("sales_products").select("sku, name, stock, cost")
           .eq("user_id", accountId()).order("sku").range(a, b)) : [],
+        // Product lines for this business (plus ones not tied to a business).
+        fetchAll<CostPool>((a, b) => {
+          const q = supabase.from("cost_pools").select("id, name, purchase_words, product_words, unit_cost, position, business_id").eq("user_id", accountId());
+          return (biz === "all" ? q : biz === "none" ? q.is("business_id", null) : q.or(`business_id.eq.${biz},business_id.is.null`)).order("position").range(a, b);
+        }),
+        fetchAll<SkuCost>((a, b) => supabase.from("sku_costs").select("sku, unit_cost, pool_id").eq("user_id", accountId()).order("sku").range(a, b)),
       ]);
-      setData({ orders, payments, shipments, lines, inventoryBuys, unskued, products });
+      setData({ orders, payments, shipments, lines, inventoryBuys, unskued, products, pools, skuCosts });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -127,14 +137,22 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
     [ship, biz]);
   // With Easyship connected, its label charges come from Easyship — a receipt for the same labels would count them twice.
   const buys = useMemo(() => (ship ? periodBuys.filter((l) => !/easyship/i.test((l as { merchant?: string | null }).merchant ?? "")) : periodBuys), [ship, periodBuys]);
-  const pnl = useMemo(() => data && buildPnl({ from, to, orders, saleLines: data.lines, inventoryBuys: data.inventoryBuys, periodBuys: buys, trips, otherExpenses }),
-    [data, orders, from, to, buys, trips, otherExpenses]);
+  // Unit cost per product: your SKU cost → store cost → tagged receipts → product line (see lib/costs.ts).
+  const stats = useMemo(() => (data ? poolStats(data.pools, data.unskued, to) : null), [data, to]);
+  const costOf = useMemo(() => data && stats ? costResolver({
+    pools: data.pools, stats, skuCosts: data.skuCosts, storeProducts: data.products, receiptBasis: costBasis(data.inventoryBuys, to),
+  }) : undefined, [data, stats, to]);
+  const pnl = useMemo(() => data && buildPnl({ from, to, orders, saleLines: data.lines, inventoryBuys: data.inventoryBuys, periodBuys: buys, trips, otherExpenses, costOf }),
+    [data, orders, from, to, buys, trips, otherExpenses, costOf]);
   const stock = useMemo(() => {
-    if (!data) return null;
+    if (!data || !stats) return null;
     const m = new Map<string, number>();
     for (const p of data.products) if (p.stock != null) m.set(skuKey(p.sku), (m.get(skuKey(p.sku)) ?? 0) + Number(p.stock));
-    return onHand({ asOf: to, inventoryBuys: data.inventoryBuys, orders, saleLines: data.lines, storeStock: m });
-  }, [data, orders, to]);
+    return onHand({
+      asOf: to, inventoryBuys: data.inventoryBuys, orders, saleLines: data.lines, storeStock: m, costOf,
+      pools: [...stats.values()].map((x) => ({ id: x.pool.id, name: x.pool.name, units: x.units, unit: x.unit })),
+    });
+  }, [data, stats, orders, to, costOf]);
 
   if (error) return <p className="error">{error}</p>;
   if (!channels || !accounts || !shippers || !data || !pnl || !stock) return <p className="muted">Loading…</p>;
@@ -199,9 +217,14 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
           failed payments come from Stripe, the source of truth for money.</p>
       )}
       {ship && <ShippingCard check={ship} from={from} to={to} biz={biz} stripe={!!rec} />}
-      <Products pnl={pnl} year={year} />
+      <Products pnl={pnl} year={year} skuCosts={data.skuCosts} canEdit={canEditReports} onSaved={reload} />
       <ScheduleC pnl={pnl} year={year} biz={biz} onHandValue={stock.value} profile={profile} saveProfile={saveProfile} canEdit={canEditReports} />
       <OnHand stock={stock} asOf={yearEnd} />
+      {stats && (
+        <CostSetup pools={data.pools} stats={stats} pnl={pnl} skuCosts={data.skuCosts} business={biz === "all" || biz === "none" ? null : biz}
+          purchaseNames={[...new Set(data.unskued.map((l) => l.description))]}
+          productNames={[...new Set([...data.products.map((p) => p.name), ...data.lines.map((l) => l.name)])]} onSaved={reload} />
+      )}
       <SkuMatcher data={data} pnl={pnl} onSaved={reload} />
       <p className="muted small">
         Cost of goods uses each SKU's average landed cost (tax and shipping included) across everything you bought.
@@ -403,7 +426,39 @@ function MonthBars({ pnl }: { pnl: Pnl }) {
 
 type PSort = "revenue" | "profit" | "margin" | "units";
 
-function Products({ pnl, year }: { pnl: Pnl; year: string }) {
+const SOURCE_PILL: Record<string, string> = { manual: "your cost", store: "store", receipts: "receipts", pool: "line" };
+
+/** Sets (or clears, with an empty value) your own unit cost for a SKU. */
+function SkuCostCell({ sku, current, canEdit, onSaved }: { sku: string; current: number | null; canEdit: boolean; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [v, setV] = useState(current == null ? "" : String(current));
+  const [err, setErr] = useState<string | null>(null);
+  if (!canEdit) return null;
+  if (!open) return <button className="link small" onClick={() => setOpen(true)}>{current == null ? "Set cost" : "Edit"}</button>;
+  async function save(raw = v) {
+    const key = sku.trim().toUpperCase();
+    const val = raw.trim() === "" ? null : Number(raw.replace(/[$,]/g, ""));
+    if (val !== null && (!Number.isFinite(val) || val < 0)) return setErr("Enter a cost like 4.25");
+    const { error } = val === null
+      ? await supabase.from("sku_costs").update({ unit_cost: null, updated_at: new Date().toISOString() }).eq("user_id", accountId()).eq("sku", key)
+      : await supabase.from("sku_costs").upsert({ user_id: accountId(), sku: key, unit_cost: val, updated_at: new Date().toISOString() }, { onConflict: "user_id,sku" });
+    if (error) return setErr(error.message);
+    setOpen(false);
+    onSaved();
+  }
+  return (
+    <span className="cost-edit">
+      <input className="cost-input" autoFocus inputMode="decimal" aria-label={`Your cost for ${sku}`} value={v} placeholder="0.00"
+        onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setOpen(false); }} />
+      <button className="link small" onClick={() => save()}>Save</button>
+      {current != null && <button className="link small" onClick={() => save("")} title="Go back to the store, receipt or product-line cost">Clear</button>}
+      {err && <span className="error small">{err}</span>}
+    </span>
+  );
+}
+
+function Products({ pnl, year, skuCosts, canEdit, onSaved }: { pnl: Pnl; year: string; skuCosts: SkuCost[]; canEdit: boolean; onSaved: () => void }) {
+  const mine = useMemo(() => new Map(skuCosts.filter((c) => c.unit_cost != null).map((c) => [c.sku, Number(c.unit_cost)])), [skuCosts]);
   const [sort, setSort] = useState<PSort>("revenue");
   const [q, setQ] = useState("");
   const [all, setAll] = useState(false);
@@ -419,8 +474,9 @@ function Products({ pnl, year }: { pnl: Pnl; year: string }) {
   if (!pnl.products.length) return null;
   const exportCsv = () => download(`profit-by-product-${year}.csv`, toCsv(
     rows.map((p) => ({ ...p, revenue: p.revenue.toFixed(2), cost: p.cost?.toFixed(2) ?? "", profit: p.profit?.toFixed(2) ?? "",
-      margin: p.margin === null ? "" : (p.margin * 100).toFixed(1), unitCost: p.unitCost?.toFixed(4) ?? "", avgPrice: p.avgPrice.toFixed(2) })),
-    ["sku", "name", "units", "revenue", "cost", "profit", "margin", "avgPrice", "unitCost"],
+      margin: p.margin === null ? "" : (p.margin * 100).toFixed(1), unitCost: p.unitCost?.toFixed(4) ?? "", avgPrice: p.avgPrice.toFixed(2),
+      costSource: p.costLabel ?? "" })),
+    ["sku", "name", "units", "revenue", "cost", "profit", "margin", "avgPrice", "unitCost", "costSource"],
   ));
   return (
     <section className="card list-card">
@@ -440,10 +496,17 @@ function Products({ pnl, year }: { pnl: Pnl; year: string }) {
           <tbody>
             {rows.slice(0, all ? undefined : 25).map((p) => (
               <tr key={p.key}>
-                <td><span className="clip">{p.name}</span><span className="muted small">{p.sku ?? "no SKU"} · avg price {money(p.avgPrice)}{p.unitCost !== null ? ` · cost ${money(p.unitCost)}/unit` : ""}</span></td>
+                <td>
+                  <span className="clip">{p.name}</span>
+                  <span className="muted small">
+                    {p.sku ?? "no SKU"} · avg price {money(p.avgPrice)}{p.unitCost !== null ? ` · cost ${money(p.unitCost)}/unit` : ""}
+                    {p.costSource && <span className={`pill src-pill ${p.costSource}`} title={p.costLabel ?? ""}>{p.costSource === "pool" ? p.costLabel : SOURCE_PILL[p.costSource]}</span>}
+                    {p.sku && <> <SkuCostCell sku={p.sku} current={mine.get(p.sku.trim().toUpperCase()) ?? null} canEdit={canEdit} onSaved={onSaved} /></>}
+                  </span>
+                </td>
                 <td className="num">{p.units.toLocaleString()}</td>
                 <td className="num mono">{money(p.revenue)}</td>
-                <td className="num mono hide-sm">{p.cost === null ? <a href="#match" className="warn-text">no cost</a> : money(p.cost)}</td>
+                <td className="num mono hide-sm">{p.cost === null ? <a href="#costs" className="warn-text">no cost</a> : money(p.cost)}</td>
                 <td className={`num mono ${p.profit !== null && p.profit < 0 ? "neg" : ""}`}>{p.profit === null ? "—" : money(p.profit)}</td>
                 <td className="num">{pct(p.margin)}</td>
               </tr>
@@ -511,13 +574,14 @@ function OnHand({ stock, asOf }: { stock: ReturnType<typeof onHand>; asOf: strin
       </div>
       <div className="scroll-x">
         <table className="data">
-          <thead><tr><th>SKU</th><th className="num">Bought</th><th className="num">Sold</th><th className="num">On hand</th><th className="num hide-sm">Store says</th><th className="num">Value</th></tr></thead>
+          <thead><tr><th>SKU or product line</th><th className="num">Bought</th><th className="num">Sold</th><th className="num">On hand</th><th className="num hide-sm">Store says</th><th className="num">Value</th></tr></thead>
           <tbody>
             {rows.slice(0, all ? undefined : 20).map((r) => (
-              <tr key={r.sku}>
-                <td><span className="clip">{r.name}</span><span className="muted small mono">{r.sku} · {money(r.unit)}/unit</span></td>
-                <td className="num">{r.bought.toLocaleString()}</td>
-                <td className="num">{r.sold.toLocaleString()}</td>
+              <tr key={r.key}>
+                <td><span className="clip">{r.name}</span><span className="muted small">
+                  {r.basis === "pool" ? "product line" : <span className="mono">{r.sku}</span>} · {money(r.unit)}/unit{r.basis === "store" ? " · counted by the store" : ""}</span></td>
+                <td className="num">{r.bought?.toLocaleString() ?? "—"}</td>
+                <td className="num">{r.sold?.toLocaleString() ?? "—"}</td>
                 <td className="num">{r.onHand.toLocaleString()}</td>
                 <td className={`num hide-sm ${r.storeStock !== null && r.storeStock !== r.onHand ? "warn-text" : ""}`}>{r.storeStock ?? "—"}</td>
                 <td className="num mono">{money(r.value)}</td>
@@ -527,7 +591,8 @@ function OnHand({ stock, asOf }: { stock: ReturnType<typeof onHand>; asOf: strin
         </table>
       </div>
       {rows.length > 20 && !all && <p className="pad"><button className="link small" onClick={() => setAll(true)}>Show all {rows.length} SKUs</button></p>}
-      <p className="muted small pad">Bought − sold by SKU as of {asOf}. Where the store's own stock count differs, a count may be off or some items were bought without a receipt.</p>
+      <p className="muted small pad">Bought − sold as of {asOf}: by SKU for tagged receipts, by product line for “styles may vary” buying, and the store's
+        own count for SKUs costed by your cost. Where the store's count differs, a count may be off or some items were bought without a receipt.</p>
     </section>
   );
 }

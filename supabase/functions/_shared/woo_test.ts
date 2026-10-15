@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { isPublicHost, mapOrder, orderFees, storeBase, validKeys } from "./woo.ts";
+import { isPublicHost, mapOrder, orderFees, productCost, storeBase, validKeys } from "./woo.ts";
 
 Deno.test("maps a paid order with refunds, fees and no customer data", () => {
   const m = mapOrder({
@@ -55,4 +55,12 @@ Deno.test("payment reference for matching to Stripe", () => {
   assertEquals(mapOrder({ ...base, transaction_id: "ch_123" })?.order.payment_ref, "ch_123");
   assertEquals(mapOrder({ ...base, transaction_id: "", meta_data: [{ key: "_stripe_intent_id", value: "pi_9" }] })?.order.payment_ref, "pi_9");
   assertEquals(mapOrder({ ...base })?.order.payment_method, "stripe");
+});
+
+Deno.test("product cost from WooCommerce or a cost plugin", () => {
+  assertEquals(productCost({ cost_of_goods_sold: { total_value: 4.5 } }), 4.5);
+  assertEquals(productCost({ cost_of_goods_sold: { total_value: 0 }, meta_data: [{ key: "_wc_cog_cost", value: "3.25" }] }), 3.25);
+  assertEquals(productCost({ meta_data: [{ key: "_alg_wc_cog_cost", value: "2" }] }), 2);
+  assertEquals(productCost({ meta_data: [{ key: "_other", value: "9" }] }), null);
+  assertEquals(productCost({}), null);
 });

@@ -44,6 +44,8 @@ const unitsOf = (l: PBuyLine) => n(l.units) || n(l.quantity) || 1;
 const counts = (o: POrder) => o.status === "paid" || o.status === "refunded";
 const inRange = (d: string | null, from: string, to: string) => !!d && d >= from && d <= to;
 
+export type UnitCost = (sku: string | null, name: string) => { unit: number; source: "manual" | "store" | "receipts" | "pool"; label: string; poolId?: string } | null;
+
 export interface CostBasis { units: number; spend: number; unit: number; name: string; lastBought: string | null }
 
 /** Average landed unit cost per SKU, from every purchase with that SKU up to `asOf`. */
@@ -73,6 +75,9 @@ export interface ProductRow {
   margin: number | null; // 0..1
   avgPrice: number;
   unitCost: number | null;
+  /** Where the unit cost came from: your cost, the store, receipts, or a product line (pool). */
+  costSource: "manual" | "store" | "receipts" | "pool" | null;
+  costLabel: string | null;
 }
 
 export interface MonthRow { month: string; sales: number; cogs: number; fees: number; expenses: number; profit: number }
@@ -121,9 +126,15 @@ export function buildPnl(args: {
   trips: PTrip[];
   /** Costs from connected services, e.g. shipping labels from Easyship: { key, label, date, amount }. */
   otherExpenses?: { key: string; label: string; date: string; amount: number }[];
+  /** Unit cost per sold product (see costs.ts). Defaults to receipts tagged with the SKU. */
+  costOf?: UnitCost;
 }): Pnl {
   const { from, to } = args;
   const basis = costBasis(args.inventoryBuys, to);
+  const costOf: UnitCost = args.costOf ?? ((sku) => {
+    const b = sku ? basis.get(skuKey(sku)) : undefined;
+    return b ? { unit: b.unit, source: "receipts", label: "Receipts" } : null;
+  });
   const orders = args.orders.filter((o) => counts(o) && inRange(o.order_date, from, to));
   const byId = new Map(orders.map((o) => [o.id, o]));
   const months = new Map<string, MonthRow>();
@@ -154,8 +165,8 @@ export function buildPnl(args: {
     if (!o) continue;
     const q = n(l.quantity) || 1;
     const k = skuKey(l.sku) || `name:${l.name.trim().toLowerCase()}`;
-    const p = prod.get(k) ?? { key: k, sku: l.sku?.trim() || null, name: l.name, units: 0, revenue: 0, cost: 0, profit: null, margin: null, avgPrice: 0, unitCost: null };
-    const b = l.sku ? basis.get(skuKey(l.sku)) : undefined;
+    const p = prod.get(k) ?? { key: k, sku: l.sku?.trim() || null, name: l.name, units: 0, revenue: 0, cost: 0, profit: null, margin: null, avgPrice: 0, unitCost: null, costSource: null, costLabel: null };
+    const b = costOf(l.sku, l.name);
     if (o.status === "paid") {
       p.units += q;
       units += q;
@@ -166,6 +177,8 @@ export function buildPnl(args: {
         month(o.order_date).cogs += q * b.unit;
       } else p.cost = null;
       p.unitCost = b ? b.unit : null;
+      p.costSource = b ? b.source : null;
+      p.costLabel = b ? b.label : null;
     }
     prod.set(k, p);
   }
@@ -218,11 +231,26 @@ export function buildPnl(args: {
   };
 }
 
-export interface OnHandRow { sku: string; name: string; bought: number; sold: number; onHand: number; unit: number; value: number; storeStock: number | null }
+export interface OnHandRow {
+  key: string;
+  sku: string | null;
+  name: string;
+  /** "receipts": a SKU's tagged purchases; "pool": a product line; "store": a costed SKU counted by the store's stock. */
+  basis: "receipts" | "pool" | "store";
+  bought: number | null;
+  sold: number | null;
+  onHand: number;
+  unit: number;
+  value: number;
+  storeStock: number | null;
+}
 
 /**
- * Inventory on hand at `asOf`: units bought − units sold per SKU, valued at average landed cost. `storeStock`
- * is what the store itself reports, when known, for comparison.
+ * Inventory on hand at `asOf`, valued at cost:
+ *  - SKUs with tagged receipts: bought − sold;
+ *  - product lines (pools): untagged purchases in the line − units sold that were costed from that line;
+ *  - SKUs costed by your cost or the store's cost with no receipts: the store's own stock count.
+ * `storeStock` is what the store reports, for comparison.
  */
 export function onHand(args: {
   asOf: string;
@@ -230,19 +258,46 @@ export function onHand(args: {
   orders: POrder[];
   saleLines: PSaleLine[];
   storeStock?: Map<string, number>;
+  costOf?: UnitCost;
+  /** Product lines with their purchased units, from costs.ts poolStats. */
+  pools?: { id: string; name: string; units: number; unit: number | null }[];
 }): { rows: OnHandRow[]; value: number; units: number } {
   const basis = costBasis(args.inventoryBuys, args.asOf);
   const paid = new Map(args.orders.filter((o) => o.status === "paid" && o.order_date <= args.asOf).map((o) => [o.id, o]));
   const sold = new Map<string, number>();
+  const soldFromPool = new Map<string, number>();
+  const costed = new Map<string, { unit: number; name: string }>();
   for (const l of args.saleLines) {
-    if (!paid.has(l.order_id) || !l.sku) continue;
-    sold.set(skuKey(l.sku), (sold.get(skuKey(l.sku)) ?? 0) + (n(l.quantity) || 1));
+    if (!paid.has(l.order_id)) continue;
+    const q = n(l.quantity) || 1;
+    if (l.sku) sold.set(skuKey(l.sku), (sold.get(skuKey(l.sku)) ?? 0) + q);
+    const c = args.costOf?.(l.sku, l.name);
+    if (c?.source === "pool" && c.poolId) soldFromPool.set(c.poolId, (soldFromPool.get(c.poolId) ?? 0) + q);
+    if (c && (c.source === "manual" || c.source === "store") && l.sku) costed.set(skuKey(l.sku), { unit: c.unit, name: l.name });
   }
   const rows: OnHandRow[] = [];
   for (const [sku, b] of basis) {
     const s = sold.get(sku) ?? 0;
     const left = Math.max(0, b.units - s);
-    rows.push({ sku, name: b.name, bought: b.units, sold: s, onHand: left, unit: b.unit, value: r2(left * b.unit), storeStock: args.storeStock?.get(sku) ?? null });
+    const c = args.costOf?.(sku, b.name);
+    const unit = c ? c.unit : b.unit;
+    rows.push({ key: sku, sku, name: b.name, basis: "receipts", bought: b.units, sold: s, onHand: left, unit, value: r2(left * unit), storeStock: args.storeStock?.get(sku) ?? null });
+  }
+  for (const p of args.pools ?? []) {
+    if (p.unit == null || !p.units) continue;
+    const s = soldFromPool.get(p.id) ?? 0;
+    const left = Math.max(0, p.units - s);
+    rows.push({ key: `pool:${p.id}`, sku: null, name: p.name, basis: "pool", bought: p.units, sold: s, onHand: left, unit: p.unit, value: r2(left * p.unit), storeStock: null });
+  }
+  // Manually or store-costed SKUs without receipts: count what the store says it still has.
+  for (const [sku, stock] of args.storeStock ?? []) {
+    if (basis.has(sku) || stock <= 0) continue;
+    const c = costed.get(sku) ?? (() => {
+      const x = args.costOf?.(sku, "");
+      return x && (x.source === "manual" || x.source === "store") ? { unit: x.unit, name: sku } : undefined;
+    })();
+    if (!c) continue;
+    rows.push({ key: sku, sku, name: c.name, basis: "store", bought: null, sold: sold.get(sku) ?? 0, onHand: stock, unit: c.unit, value: r2(stock * c.unit), storeStock: stock });
   }
   rows.sort((a, b) => b.value - a.value);
   return { rows, value: r2(rows.reduce((a, r) => a + r.value, 0)), units: rows.reduce((a, r) => a + r.onHand, 0) };

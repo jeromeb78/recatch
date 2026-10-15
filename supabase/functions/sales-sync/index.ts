@@ -8,7 +8,7 @@
 //   { action: "rekey", channel, key, secret }                       → { ok }
 // Disconnecting is a plain delete of the sales_channels row from the app (its Vault secret goes with it).
 import { accountFor, adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
-import { isPublicHost, mapOrder, storeBase, validKeys, wooAuthHeader, type WooOrder } from "../_shared/woo.ts";
+import { isPublicHost, mapOrder, productCost, storeBase, validKeys, wooAuthHeader, type WooOrder } from "../_shared/woo.ts";
 
 const PER_PAGE = 100;
 const PAGES_PER_CALL = 8;
@@ -54,26 +54,29 @@ async function syncProducts(owner: string, channel: string, base: string, key: s
   const variable: number[] = [];
   for (let page = 1; page <= 20; page++) {
     const { body, totalPages } = await wooGet(base, "products", key, secret, {
-      per_page: String(PER_PAGE), page: String(page), status: "any", _fields: "id,sku,name,price,stock_quantity,type",
+      per_page: String(PER_PAGE), page: String(page), status: "any", _fields: "id,sku,name,price,stock_quantity,type,cost_of_goods_sold,meta_data",
     });
-    for (const p of body as { id: number; sku?: string; name?: string; price?: string; stock_quantity?: number | null; type?: string }[]) {
+    type P = { id: number; sku?: string; name?: string; price?: string; stock_quantity?: number | null; type?: string } & Parameters<typeof productCost>[0];
+    for (const p of body as P[]) {
       if (p.type === "variable") variable.push(p.id);
       if (p.sku?.trim()) {
         rows.push({ user_id: owner, channel_id: channel, external_id: String(p.id), sku: p.sku.trim(), name: (p.name ?? "").slice(0, 300) || p.sku,
-          price: p.price ? Number(p.price) || null : null, stock: p.stock_quantity ?? null });
+          price: p.price ? Number(p.price) || null : null, stock: p.stock_quantity ?? null, cost: productCost(p) });
       }
     }
     if (page >= totalPages) break;
   }
   // Variations carry their own SKUs (size, color…).
   for (const parent of variable.slice(0, 60)) {
-    const { body } = await wooGet(base, `products/${parent}/variations`, key, secret, { per_page: String(PER_PAGE), _fields: "id,sku,name,price,stock_quantity,attributes" });
-    for (const v of body as { id: number; sku?: string; price?: string; stock_quantity?: number | null; attributes?: { option?: string }[] }[]) {
+    const { body } = await wooGet(base, `products/${parent}/variations`, key, secret, { per_page: String(PER_PAGE), _fields: "id,sku,name,price,stock_quantity,attributes,cost_of_goods_sold,meta_data" });
+    type V = { id: number; sku?: string; price?: string; stock_quantity?: number | null; attributes?: { option?: string }[] } & Parameters<typeof productCost>[0];
+    for (const v of body as V[]) {
       if (!v.sku?.trim()) continue;
       const parentName = (rows.find((r) => r.external_id === String(parent))?.name as string | undefined) ?? "";
       const opts = (v.attributes ?? []).map((a) => a.option).filter(Boolean).join(", ");
       rows.push({ user_id: owner, channel_id: channel, external_id: `${parent}:${v.id}`, sku: v.sku.trim(),
-        name: [parentName, opts].filter(Boolean).join(" — ").slice(0, 300) || v.sku, price: v.price ? Number(v.price) || null : null, stock: v.stock_quantity ?? null });
+        name: [parentName, opts].filter(Boolean).join(" — ").slice(0, 300) || v.sku, price: v.price ? Number(v.price) || null : null, stock: v.stock_quantity ?? null,
+        cost: productCost(v) });
     }
   }
   for (let i = 0; i < rows.length; i += 500) {

@@ -336,6 +336,24 @@ stock count); one click saves the year-end inventory and fees into Write-offs. H
 Tables: `sales_channels`, `sales_orders`, `sales_lines`, `sales_products` (migration `20261015132707_sales.sql`), in the *Reports*
 area for team access. Pure logic and tests: `web/src/lib/pnl.ts`, `salesImport.ts`, `skuMatch.ts`, `supabase/functions/_shared/woo.ts`.
 
+### Cost of goods: product lines and SKU costs
+
+Reseller receipts rarely name the exact item ("Hot Wheels single pack – styles may vary"), so each product sold is costed
+from the most specific source available (`web/src/lib/costs.ts`):
+
+1. **Your cost** for that SKU (`sku_costs`): set inline in *Profit by product*, or upload/paste a `sku,cost` CSV.
+2. **The store's cost**, when WooCommerce keeps one (its cost-of-goods field, or the `_wc_cog_cost` / `_alg_wc_cog_cost` meta
+   of common cost plugins), synced into `sales_products.cost`.
+3. **Receipts tagged** with the SKU (`line_items.woo_sku`): their average landed cost.
+4. **Its product line** (`cost_pools`): the first line whose *store product words* match the product's name (or a SKU pinned to
+   a line). A line's unit cost is its own `unit_cost` if typed, else the average landed cost per unit of untagged inventory
+   receipts matching its *receipt words*. *Suggest product lines* proposes common lines (Car Culture, Monster Jam, M2,
+   Matchbox Moving Parts, Hot Wheels mainline…) found in both your receipts and your store.
+
+Setting a SKU's cost later simply replaces its product-line cost. Inventory on hand counts tagged SKUs by bought − sold,
+product lines by their purchases − units sold from that line, and SKUs costed by your/store cost by the store's own stock.
+Migration `20261015182418_costs.sql`.
+
 ## Receipt images for the IRS
 
 Every receipt has **Download for IRS (JPG)**, and Reports → Export has **Receipt images for the IRS**, which downloads a

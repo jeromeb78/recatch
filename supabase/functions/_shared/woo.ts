@@ -141,3 +141,17 @@ export function validKeys(key: unknown, secret: unknown): boolean {
   return typeof key === "string" && typeof secret === "string"
     && /^ck_[a-f0-9]{20,64}$/i.test(key.trim()) && /^cs_[a-f0-9]{20,64}$/i.test(secret.trim());
 }
+
+// Where cost-of-goods plugins keep a product's cost.
+const COST_KEYS = ["_wc_cog_cost", "_alg_wc_cog_cost", "_wcj_purchase_price", "_purchase_price", "_cost_price"];
+
+/** A product's cost of goods as the store records it: WooCommerce's own field, else a cost plugin's note. */
+export function productCost(p: { cost_of_goods_sold?: { total_value?: unknown } | null; meta_data?: { key?: string; value?: unknown }[] }): number | null {
+  const native = num(p.cost_of_goods_sold?.total_value);
+  if (native > 0) return Math.round(native * 10000) / 10000;
+  for (const key of COST_KEYS) {
+    const v = num((p.meta_data ?? []).find((m) => m.key === key)?.value);
+    if (v > 0) return Math.round(v * 10000) / 10000;
+  }
+  return null;
+}
