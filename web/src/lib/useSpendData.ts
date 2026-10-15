@@ -35,7 +35,7 @@ export function useSpendData(periodKey: PeriodKey, business: string) {
       return out;
     };
     Promise.all([
-      all<AReceipt>((a, z) => scope(supabase.from("receipts").select("id, merchant, purchase_date, total, document_type, status, business_id")
+      all<AReceipt>((a, z) => scope(supabase.from("receipts").select("id, merchant, purchase_date, total, document_type, status, business_id, category_id")
         .eq("user_id", accountId())).order("purchase_date").range(a, z)),
       all<ALine>((a, z) => scope(supabase.from("inventory_lines")
         .select("id, receipt_id, description, woo_sku, store_sku, quantity, units, landed_total, tax_line, use_type, business_pct, merchant, purchase_date")

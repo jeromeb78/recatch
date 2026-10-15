@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { money } from "../lib/format";
 import { byMonth, change, KIND_LABEL, kpis, storeStats, type ALine, type AReceipt, type Kind, type Period } from "../lib/analytics";
+import { categoryStats, type CategoryInfo, type CategoryStat } from "../lib/categoryStats";
+import { taxShort } from "../lib/tax";
 
 // Fixed categorical order (validated: dataviz palette slots 1–3) + neutral gray for "not sorted yet".
 const CHART_KINDS: Kind[] = ["inventory", "business", "personal", "unsorted"];
@@ -137,7 +139,56 @@ function StoreBars({ receipts, lines, onStore }: { receipts: AReceipt[]; lines: 
 
 export interface Gaps { review: number; unassigned: number | null; noSku: number }
 
-export function Analytics({ period, cur, prev, gaps, onStore, onNoSku, onUnassigned }: {
+/** One card per receipt category: spend, receipts, and the likely write-offs in it. Tap to list its receipts. */
+function CategoryCards({ stats, active, onCategory }: { stats: CategoryStat[]; active: string; onCategory: (id: string) => void }) {
+  if (!stats.length) return null;
+  return (
+    <div className="card">
+      <div className="row-between chart-head">
+        <h2>By category</h2>
+        <span className="muted small">Write-offs use your items' tax lines · not tax advice</span>
+      </div>
+      <div className="category-grid">
+        {stats.map((c) => {
+          const on = active === c.id;
+          const delta = c.prevSpend != null ? change(c.spend, c.prevSpend) : null;
+          return (
+            <button key={c.id} className={`category-card${on ? " on" : ""}`} onClick={() => onCategory(on ? "" : c.id)} aria-pressed={on}
+              title={on ? "Show all receipts" : `Show ${c.name} receipts`}>
+              <span className="cat-head">
+                <i className="dot-swatch" style={{ background: c.color || (c.isBusiness ? "var(--series-1)" : "var(--series-none)") }} />
+                <b className="grow">{c.name}</b>
+              </span>
+              {c.id !== "none" && <span className={`pill cat-kind ${c.isBusiness ? "ok" : ""}`}>{c.isBusiness ? "Business" : "Personal"}</span>}
+              <span className="cat-spend">
+                <b className="mono">{money(c.spend)}</b>
+                <span className="muted small">{c.receipts} receipt{c.receipts === 1 ? "" : "s"}{delta !== null ? ` · ${delta > 0 ? "▲" : delta < 0 ? "▼" : "·"} ${Math.abs(delta)}%` : ""}</span>
+              </span>
+              {c.writeOffTotal > 0 ? (
+                <span className="cat-writeoffs">
+                  <span className="small"><b>Write-offs <span className="mono">{money(c.writeOffTotal)}</span></b></span>
+                  {c.writeOffs.slice(0, 3).map((w) => (
+                    <span key={w.line} className="small muted wo-line">
+                      <span className="grow">{w.line === "cogs" ? "Cost of goods (as it sells)" : taxShort(w.line)}</span>
+                      <span className="mono">{money(w.amount)}</span>
+                    </span>
+                  ))}
+                  {c.writeOffs.length > 3 && <span className="small muted">+{c.writeOffs.length - 3} more lines</span>}
+                </span>
+              ) : c.personalNote ? (
+                <span className="small muted cat-note">{c.personalNote.label}</span>
+              ) : (
+                <span className="small muted cat-note">{c.isBusiness ? "No items sorted to a tax line yet" : "Not deductible"}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function Analytics({ period, cur, prev, gaps, onStore, onNoSku, onUnassigned, categories = [], activeCategory = "", onCategory }: {
   period: Period;
   cur: { receipts: AReceipt[]; lines: ALine[] };
   prev: { receipts: AReceipt[]; lines: ALine[] } | null;
@@ -145,7 +196,12 @@ export function Analytics({ period, cur, prev, gaps, onStore, onNoSku, onUnassig
   onStore: (name: string) => void;
   onNoSku: () => void;
   onUnassigned: () => void;
+  categories?: CategoryInfo[];
+  activeCategory?: string;
+  onCategory?: (id: string) => void;
 }) {
+  const cats = useMemo(() => categoryStats({ receipts: cur.receipts, lines: cur.lines, categories, prevReceipts: prev?.receipts ?? null }),
+    [cur, prev, categories]);
   const k = useMemo(() => kpis(cur.receipts, cur.lines), [cur]);
   const p = useMemo(() => (prev ? kpis(prev.receipts, prev.lines) : undefined), [prev]);
   const tiles: { label: string; value: string; now: number; before?: number; swatch?: Kind; note?: string }[] = [
@@ -188,6 +244,8 @@ export function Analytics({ period, cur, prev, gaps, onStore, onNoSku, onUnassig
           <StoreBars receipts={cur.receipts} lines={cur.lines} onStore={onStore} />
         </div>
       </div>
+
+      {onCategory && <CategoryCards stats={cats} active={activeCategory} onCategory={onCategory} />}
     </section>
   );
 }
