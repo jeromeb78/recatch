@@ -3,10 +3,10 @@ import { money, shortDate, signedTotal } from "../lib/format";
 import { monogram, SOURCE_LABEL } from "../lib/merchant";
 import type { Category, Receipt } from "../lib/types";
 
-export default function ReceiptRow({ r, category }: { r: Receipt; category?: Category }) {
+export default function ReceiptRow({ r, category, extra }: { r: Receipt; category?: Category; extra?: string }) {
   const m = monogram(r.merchant);
   const review = r.status === "needs_review";
-  const meta = [shortDate(r.purchase_date), review ? "Needs review" : SOURCE_LABEL[r.source], !review && category?.name]
+  const meta = [shortDate(r.purchase_date), review ? "Needs review" : SOURCE_LABEL[r.source], !review && category?.name, extra]
     .filter(Boolean)
     .join(" · ");
   return (
