@@ -5,7 +5,8 @@ import { accountId, useAccount } from "../lib/account";
 import { money, relative } from "../lib/format";
 import { download, toCsv } from "../lib/csv";
 import { buildPnl, onHand, skuKey, type PBuyLine, type POrder, type PSaleLine, type PTrip, type Pnl } from "../lib/pnl";
-import { refreshStale, useChannels, usePaymentAccounts, type Channel, type PaymentAccount } from "../lib/sales";
+import { refreshStale, useChannels, usePaymentAccounts, useShippingAccounts, type Channel, type PaymentAccount, type ShippingAccount } from "../lib/sales";
+import { reconcileShipping, type RShipment, type ShippingCheck } from "../lib/shipping";
 import { inScope, reconcile, type Reconciliation, type ROrder, type RPayment } from "../lib/reconcile";
 import { candidatesFrom, suggest, type Candidate } from "../lib/skuMatch";
 import type { TaxProfile } from "../lib/writeoffs";
@@ -29,6 +30,7 @@ interface SalesData {
   /** Every order in the account (scoped after Stripe reconciliation, since a charge may match any of them). */
   orders: ROrder[];
   payments: RPayment[];
+  shipments: RShipment[];
   lines: PSaleLine[];
   inventoryBuys: PBuyLine[];
   unskued: PBuyLine[];
@@ -46,13 +48,16 @@ function useSalesData(biz: string, to: string, enabled: boolean) {
       return biz === "all" ? q : biz === "none" ? b.is(col, null) : b.eq(col, biz);
     };
     try {
-      const [orders, payments, lines, inventoryBuys, unskued, products] = await Promise.all([
+      const [orders, payments, shipments, lines, inventoryBuys, unskued, products] = await Promise.all([
         enabled ? fetchAll<ROrder>((a, b) => supabase.from("sales_orders")
           .select("id, order_date, status, items_total, shipping_charged, tax_collected, refunded, fees, channel_id, external_id, order_number, business_id, payment_method, payment_ref")
           .eq("user_id", accountId()).lte("order_date", to).order("order_date").range(a, b)) : [],
         enabled ? fetchAll<RPayment>((a, b) => supabase.from("payments")
           .select("id, account_id, external_id, payment_intent, payment_date, status, amount, refunded, fee, disputed, description, order_ref, site_url")
           .eq("user_id", accountId()).lte("payment_date", to).order("payment_date").range(a, b)) : [],
+        enabled ? fetchAll<RShipment>((a, b) => supabase.from("shipments")
+          .select("id, account_id, external_id, order_ref, ship_date, state, label_cost, courier, tracking")
+          .eq("user_id", accountId()).lte("ship_date", to).order("ship_date").range(a, b)) : [],
         enabled ? fetchAll<PSaleLine>((a, b) => scope(supabase.from("sales_lines")
           .select("order_id, sku, name, quantity, total, sales_orders!inner(business_id, order_date)")
           .eq("user_id", accountId()).lte("sales_orders.order_date", to), "sales_orders.business_id").order("id").range(a, b)) : [],
@@ -65,7 +70,7 @@ function useSalesData(biz: string, to: string, enabled: boolean) {
         enabled ? fetchAll<Candidate & { stock: number | null }>((a, b) => supabase.from("sales_products").select("sku, name, stock")
           .eq("user_id", accountId()).order("sku").range(a, b)) : [],
       ]);
-      setData({ orders, payments, lines, inventoryBuys, unskued, products });
+      setData({ orders, payments, shipments, lines, inventoryBuys, unskued, products });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -86,34 +91,44 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
   const canEditReports = can("reports", "edit");
   const { channels, reload: reloadChannels } = useChannels();
   const { accounts, reload: reloadAccounts } = usePaymentAccounts();
+  const { accounts: shippers, reload: reloadShippers } = useShippingAccounts();
   const from = year === "all" ? "1900-01-01" : `${year}-01-01`;
   const today = new Date().toISOString().slice(0, 10);
   const to = year === "all" ? today : `${year}-12-31` < today ? `${year}-12-31` : today;
   const yearEnd = year === "all" ? today : `${year}-12-31`;
-  const connected = !!channels?.length || !!accounts?.length;
+  const connected = !!channels?.length || !!accounts?.length || !!shippers?.length;
   const { data, error, reload } = useSalesData(biz, to, connected);
   const [syncing, setSyncing] = useState(false);
 
   // Bring connected stores up to date when the tab opens (at most hourly).
   useEffect(() => {
-    if (!channels || !accounts || !connected || !canEditReports) return;
+    if (!channels || !accounts || !shippers || !connected || !canEditReports) return;
     let gone = false;
     setSyncing(true);
-    refreshStale(channels, accounts).then((changed) => {
+    refreshStale(channels, accounts, shippers).then((changed) => {
       if (gone) return;
       setSyncing(false);
-      if (changed) { reload(); reloadChannels(); reloadAccounts(); }
+      if (changed) { reload(); reloadChannels(); reloadAccounts(); reloadShippers(); }
     });
     return () => { gone = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channels?.length, accounts?.length]);
+  }, [channels?.length, accounts?.length, shippers?.length]);
 
   // Stripe decides what was charged, refunded and paid in fees; then keep this business's orders.
   const rec = useMemo<Reconciliation | null>(() => data && accounts?.length && channels
     ? reconcile({ orders: data.orders, payments: data.payments, channels, accounts }) : null, [data, accounts, channels]);
   const orders = useMemo<POrder[]>(() => (data ? inScope(rec ? rec.orders : data.orders, biz) : []), [data, rec, biz]);
-  const pnl = useMemo(() => data && buildPnl({ from, to, orders, saleLines: data.lines, inventoryBuys: data.inventoryBuys, periodBuys, trips }),
-    [data, orders, from, to, periodBuys, trips]);
+  // Easyship label costs against what customers paid for shipping (after Stripe's corrections).
+  const ship = useMemo<ShippingCheck | null>(() => data && shippers?.length && channels ? reconcileShipping({
+    orders: rec ? rec.orders : data.orders, shipments: data.shipments, accounts: shippers, today,
+    wooChannels: new Set(channels.filter((c) => c.kind === "woocommerce").map((c) => c.id)),
+  }) : null, [data, rec, shippers, channels, today]);
+  const otherExpenses = useMemo(() => (ship ? inScope(ship.expenses, biz).map((e) => ({ key: "ship", label: "Shipping labels (Easyship)", date: e.date, amount: e.amount })) : []),
+    [ship, biz]);
+  // With Easyship connected, its label charges come from Easyship — a receipt for the same labels would count them twice.
+  const buys = useMemo(() => (ship ? periodBuys.filter((l) => !/easyship/i.test((l as { merchant?: string | null }).merchant ?? "")) : periodBuys), [ship, periodBuys]);
+  const pnl = useMemo(() => data && buildPnl({ from, to, orders, saleLines: data.lines, inventoryBuys: data.inventoryBuys, periodBuys: buys, trips, otherExpenses }),
+    [data, orders, from, to, buys, trips, otherExpenses]);
   const stock = useMemo(() => {
     if (!data) return null;
     const m = new Map<string, number>();
@@ -122,9 +137,9 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
   }, [data, orders, to]);
 
   if (error) return <p className="error">{error}</p>;
-  if (!channels || !accounts || !data || !pnl || !stock) return <p className="muted">Loading…</p>;
+  if (!channels || !accounts || !shippers || !data || !pnl || !stock) return <p className="muted">Loading…</p>;
 
-  const errored: (Channel | PaymentAccount)[] = [...channels, ...accounts].filter((c) => c.status === "error");
+  const errored: (Channel | PaymentAccount | ShippingAccount)[] = [...channels, ...accounts, ...shippers].filter((c) => c.status === "error");
   const noSales = !connected;
 
   return (
@@ -176,6 +191,7 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
         <p className="banner">Stripe takes your store's payments? <Link to="/settings#sales">Connect Stripe</Link> so refunds, fees and
           failed payments come from Stripe, the source of truth for money.</p>
       )}
+      {ship && <ShippingCard check={ship} from={from} to={to} biz={biz} stripe={!!rec} />}
       <Products pnl={pnl} year={year} />
       <ScheduleC pnl={pnl} year={year} biz={biz} onHandValue={stock.value} profile={profile} saveProfile={saveProfile} canEdit={canEditReports} />
       <OnHand stock={stock} asOf={yearEnd} />
@@ -186,6 +202,64 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
         {channels.filter((c) => c.kind === "woocommerce" && c.last_synced_at).map((c) => ` ${c.name} synced ${relative(c.last_synced_at)}.`)}
       </p>
     </div>
+  );
+}
+
+/** Easyship labels against what customers paid for shipping, for the period. */
+function ShippingCard({ check, from, to, biz, stripe }: { check: ShippingCheck; from: string; to: string; biz: string; stripe: boolean }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const within = <T extends { date: string; business_id: string | null }>(xs: T[]) => inScope(xs, biz).filter((x) => x.date >= from && x.date <= to);
+  const orders = within(check.orders);
+  const charged = orders.reduce((a, o) => a + o.charged, 0);
+  const cost = orders.reduce((a, o) => a + o.cost, 0);
+  const losing = orders.filter((o) => o.cost > o.charged + 0.005 && !o.refunded).sort((a, b) => (b.cost - b.charged) - (a.cost - a.charged));
+  const refunded = orders.filter((o) => o.refunded);
+  const unmatched = within(check.unmatched);
+  const unshipped = within(check.unshipped);
+  const items: { key: string; label: string; detail: string; rows: string[] }[] = [
+    { key: "losing", label: `${losing.length} order${losing.length === 1 ? "" : "s"} where the label cost more than the customer paid for shipping`,
+      detail: `Together ${money(losing.reduce((a, o) => a + o.cost - o.charged, 0))} more than charged. Check shipping rates or box sizes for these.`,
+      rows: losing.map((o) => `#${o.number} · ${o.date} · paid ${money(o.charged)}, label ${money(o.cost)}${o.labels > 1 ? ` (${o.labels} labels)` : ""}`) },
+    { key: "refunded", label: `${refunded.length} refunded order${refunded.length === 1 ? " was" : "s were"} already shipped`,
+      detail: "The label cost is still yours unless the label was voided in Easyship.",
+      rows: refunded.map((o) => `#${o.number} · ${o.date} · label ${money(o.cost)}`) },
+    { key: "unmatched", label: `${unmatched.length} label${unmatched.length === 1 ? "" : "s"} with no matching store order`,
+      detail: "Counted as shipping expense. Usually a manual shipment, a return, or an order from a store that isn't connected.",
+      rows: unmatched.map((u) => `${u.date} · ${money(u.cost)} · ${u.orderRef ? `order “${u.orderRef}”` : "no order number"}${u.courier ? ` · ${u.courier}` : ""}`) },
+    { key: "unshipped", label: `${unshipped.length} paid order${unshipped.length === 1 ? "" : "s"} charged shipping but ha${unshipped.length === 1 ? "s" : "ve"} no label`,
+      detail: "Shipped another way (local pickup, a label bought outside Easyship), or not shipped yet.",
+      rows: unshipped.map((u) => `#${u.number} · ${u.date} · shipping paid ${money(u.charged)}`) },
+  ].filter((i) => i.rows.length);
+  return (
+    <section className="card stripe-check">
+      <div className="row-between"><h2>Shipping vs. Easyship labels</h2>
+        <span className={`pill ${items.length ? "warn" : "ok"}`}>{items.length ? `${items.length} to look at` : "All matched"}</span></div>
+      <dl className="ship-facts">
+        <div><dt>Customers paid for shipping</dt><dd className="mono">{money(charged)}</dd></div>
+        <div><dt>Labels cost</dt><dd className="mono">{money(cost)}</dd></div>
+        <div><dt>Shipping {charged - cost >= 0 ? "profit" : "loss"}</dt><dd className={`mono ${charged - cost < 0 ? "neg" : ""}`}>{money(charged - cost)}</dd></div>
+      </dl>
+      <p className="muted small">
+        {orders.length.toLocaleString()} orders matched to Easyship labels by order number{stripe ? ", using Stripe's confirmed amounts" : ""}.
+        All label costs count as a shipping expense in profit.
+      </p>
+      {items.length > 0 && (
+        <ul className="check-list">
+          {items.map((i) => (
+            <li key={i.key}>
+              <button className="link" onClick={() => setOpen(open === i.key ? null : i.key)} aria-expanded={open === i.key}>{i.label}</button>
+              {open === i.key && (
+                <>
+                  <p className="muted small">{i.detail}</p>
+                  <ul className="mono small">{i.rows.slice(0, 50).map((r) => <li key={r}>{r}</li>)}</ul>
+                  {i.rows.length > 50 && <p className="muted small">…and {i.rows.length - 50} more</p>}
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

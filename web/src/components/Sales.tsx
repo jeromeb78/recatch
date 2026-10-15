@@ -3,7 +3,10 @@ import { supabase } from "../lib/supabase";
 import { accountId, useAccount } from "../lib/account";
 import { useBusinesses } from "../lib/businesses";
 import { money, relative, shortDate } from "../lib/format";
-import { callPayments, callSales, saveImport, syncPayments, syncStore, useChannels, usePaymentAccounts, type Channel, type PaymentAccount } from "../lib/sales";
+import {
+  callPayments, callSales, callShipping, saveImport, syncPayments, syncShipping, syncStore, useChannels, usePaymentAccounts, useShippingAccounts,
+  type Channel, type PaymentAccount, type ShippingAccount,
+} from "../lib/sales";
 import { detectPreset, FIELD_LABEL, importSales, parseCsv, PRESETS, type Field, type ImportResult, type Mapping, type Preset } from "../lib/salesImport";
 
 /** Settings → Sales: connect a WooCommerce store or import marketplace files, so reports can show profit. */
@@ -13,8 +16,9 @@ export function SalesSection() {
   const canEdit = can("reports", "edit");
   const { channels, reload } = useChannels(canSee);
   const { accounts, reload: reloadAccounts } = usePaymentAccounts(canSee);
+  const { accounts: shippers, reload: reloadShippers } = useShippingAccounts(canSee);
   const { active: businesses } = useBusinesses();
-  const [mode, setMode] = useState<null | "woo" | "stripe" | { importInto?: string }>(null);
+  const [mode, setMode] = useState<null | "woo" | "stripe" | "easyship" | { importInto?: string }>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -46,7 +50,13 @@ export function SalesSection() {
 
       {accounts && accounts.length > 0 && (
         <ul className="channel-list">
-          {accounts.map((a) => <PaymentRow key={a.id} a={a} canEdit={canEdit} businesses={businesses} reload={reloadAccounts} />)}
+          {accounts.map((a) => <ServiceRow key={a.id} a={a} cfg={STRIPE_CFG(a)} canEdit={canEdit} businesses={businesses} reload={reloadAccounts} />)}
+        </ul>
+      )}
+
+      {shippers && shippers.length > 0 && (
+        <ul className="channel-list">
+          {shippers.map((a) => <ServiceRow key={a.id} a={a} cfg={EASYSHIP_CFG} canEdit={canEdit} businesses={businesses} reload={reloadShippers} />)}
         </ul>
       )}
 
@@ -54,12 +64,14 @@ export function SalesSection() {
         <div className="actions">
           <button className="primary" onClick={() => setMode("woo")}>Connect WooCommerce</button>
           <button onClick={() => setMode("stripe")}>Connect Stripe</button>
+          <button onClick={() => setMode("easyship")}>Connect Easyship</button>
           <button onClick={() => setMode({})}>Import eBay, Etsy or Shopify sales</button>
         </div>
       )}
       {mode === "woo" && <ConnectWoo businesses={businesses} onDone={() => { setMode(null); reload(); }} />}
       {mode === "stripe" && <ConnectStripe businesses={businesses} onDone={() => { setMode(null); reloadAccounts(); }} />}
-      {mode !== null && mode !== "woo" && mode !== "stripe" && (
+      {mode === "easyship" && <ConnectEasyship businesses={businesses} onDone={() => { setMode(null); reloadShippers(); }} />}
+      {mode !== null && mode !== "woo" && mode !== "stripe" && mode !== "easyship" && (
         <ImportFile channels={(channels ?? []).filter((c) => c.kind === "csv")} businesses={businesses} into={mode.importInto}
           onDone={() => { setMode(null); reload(); }} />
       )}
@@ -139,23 +151,37 @@ function ChannelRow({ c, orders, canEdit, businesses, reload, onImport }: {
   );
 }
 
-function PaymentRow({ a, canEdit, businesses, reload }: {
-  a: PaymentAccount; canEdit: boolean; businesses: { id: string; name: string }[]; reload: () => void;
+interface ServiceConfig {
+  table: "payment_accounts" | "shipping_accounts";
+  countTable: "payments" | "shipments";
+  noun: string;
+  pill: string;
+  role: string;
+  sync: (id: string, onProgress: (n: number) => void) => Promise<number>;
+  disconnect: string;
+  rekeyLabel: string;
+  Rekey: (p: { account: string; onDone: () => void }) => JSX.Element;
+}
+
+/** One connected service (Stripe, Easyship): status, sync, business, new key, disconnect. */
+function ServiceRow({ a, cfg, canEdit, businesses, reload }: {
+  a: { id: string; name: string; business_id: string | null; status: string; last_error: string | null; last_synced_at: string | null; backfill_cursor: string | null };
+  cfg: ServiceConfig; canEdit: boolean; businesses: { id: string; name: string }[]; reload: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [rekey, setRekey] = useState(false);
   const [count, setCount] = useState<number | null>(null);
   useEffect(() => {
-    supabase.from("payments").select("id", { count: "exact", head: true }).eq("account_id", a.id).then(({ count }) => setCount(count ?? 0));
-  }, [a.id, a.last_synced_at]);
+    supabase.from(cfg.countTable).select("id", { count: "exact", head: true }).eq("account_id", a.id).then(({ count }) => setCount(count ?? 0));
+  }, [a.id, a.last_synced_at, cfg.countTable]);
 
   async function sync() {
     setBusy("Syncing…");
     setMsg(null);
     try {
-      const n = await syncPayments(a.id, (k) => setBusy(`Syncing… ${k.toLocaleString()} payments`));
-      setMsg(n ? `${n.toLocaleString()} payment${n === 1 ? "" : "s"} updated` : "Up to date");
+      const n = await cfg.sync(a.id, (k) => setBusy(`Syncing… ${k.toLocaleString()} ${cfg.noun}`));
+      setMsg(n ? `${n.toLocaleString()} ${cfg.noun} updated` : "Up to date");
     } catch (e) {
       setMsg((e as Error).message);
     }
@@ -163,13 +189,13 @@ function PaymentRow({ a, canEdit, businesses, reload }: {
     reload();
   }
   async function setBusiness(id: string) {
-    const { error } = await supabase.from("payment_accounts").update({ business_id: id || null }).eq("id", a.id);
+    const { error } = await supabase.from(cfg.table).update({ business_id: id || null }).eq("id", a.id);
     if (error) setMsg(error.message);
     reload();
   }
   async function disconnect() {
-    if (!confirm("Disconnect Stripe? Its saved key and the payments copied into Receipt Catcher are deleted. Nothing changes in Stripe.")) return;
-    const { error } = await supabase.from("payment_accounts").delete().eq("id", a.id);
+    if (!confirm(cfg.disconnect)) return;
+    const { error } = await supabase.from(cfg.table).delete().eq("id", a.id);
     if (error) setMsg(error.message);
     reload();
   }
@@ -178,11 +204,11 @@ function PaymentRow({ a, canEdit, businesses, reload }: {
     <li className="channel">
       <div className="row-between">
         <div className="grow">
-          <b>{a.name}</b> <span className="pill">Stripe{a.livemode ? "" : " · test mode"}</span>
+          <b>{a.name}</b> <span className="pill">{cfg.pill}</span>
           <div className="muted small">
-            {count !== null && `${count.toLocaleString()} payments · `}
+            {count !== null && `${count.toLocaleString()} ${cfg.noun} · `}
             {a.backfill_cursor !== "done" ? "importing history…" : a.last_synced_at ? `synced ${relative(a.last_synced_at)}` : "not synced yet"}
-            {" · source of truth for sales, refunds and fees"}
+            {` · ${cfg.role}`}
           </div>
         </div>
         {canEdit && (
@@ -204,14 +230,25 @@ function PaymentRow({ a, canEdit, businesses, reload }: {
       {a.status === "error" && (
         <p className="banner warn">
           {a.last_error ?? "The last sync failed."}{" "}
-          {canEdit && <button className="link" onClick={() => setRekey(true)}>Use a new key</button>}
+          {canEdit && <button className="link" onClick={() => setRekey(true)}>{cfg.rekeyLabel}</button>}
         </p>
       )}
-      {rekey && <StripeKey account={a.id} onDone={() => { setRekey(false); reload(); }} />}
+      {rekey && <cfg.Rekey account={a.id} onDone={() => { setRekey(false); reload(); }} />}
       {msg && <p className="muted small">{msg}</p>}
     </li>
   );
 }
+
+const STRIPE_CFG = (a: PaymentAccount): ServiceConfig => ({
+  table: "payment_accounts", countTable: "payments", noun: "payments", pill: `Stripe${a.livemode ? "" : " · test mode"}`,
+  role: "source of truth for sales, refunds and fees", sync: syncPayments, rekeyLabel: "Use a new key", Rekey: StripeKey,
+  disconnect: "Disconnect Stripe? Its saved key and the payments copied into Receipt Catcher are deleted. Nothing changes in Stripe.",
+});
+const EASYSHIP_CFG: ServiceConfig = {
+  table: "shipping_accounts", countTable: "shipments", noun: "shipments", pill: "Easyship",
+  role: "label costs checked against what customers paid", sync: syncShipping, rekeyLabel: "Use a new token", Rekey: EasyshipToken,
+  disconnect: "Disconnect Easyship? Its saved token and the shipments copied into Receipt Catcher are deleted. Nothing changes in Easyship.",
+};
 
 function StripeHelp() {
   return (
@@ -292,6 +329,92 @@ function ConnectStripe({ businesses, onDone }: { businesses: { id: string; name:
       {error && <p className="error">{error}</p>}
       <div className="actions tight">
         <button className="primary" disabled={!!busy}>{busy ?? "Connect and import payments"}</button>
+        <button type="button" className="link" onClick={onDone} disabled={!!busy}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function EasyshipHelp() {
+  return (
+    <ol className="muted small help-steps">
+      <li>In Easyship, open <b>Connect → API Integration</b> (or Settings → API) and create an integration named “Receipt Catcher”.</li>
+      <li>Copy its <b>production</b> API access token (it starts with <span className="mono">prod_</span>). If you can choose scopes, shipment
+        read access is all that's needed.</li>
+      <li>Paste it here. It's stored encrypted and only used to read shipments — never to buy or cancel labels.</li>
+    </ol>
+  );
+}
+
+function EasyshipToken({ account, onDone }: { account: string; onDone: () => void }) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await callShipping({ action: "rekey", shipping_account: account, token });
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+    setBusy(false);
+  }
+  return (
+    <form className="stack-sm" onSubmit={submit}>
+      <EasyshipHelp />
+      <label className="field">API access token<input required type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="prod_…" /></label>
+      {error && <p className="error">{error}</p>}
+      <div className="actions tight"><button className="primary" disabled={busy}>{busy ? "Checking…" : "Save token"}</button></div>
+    </form>
+  );
+}
+
+function ConnectEasyship({ businesses, onDone }: { businesses: { id: string; name: string }[]; onDone: () => void }) {
+  const [token, setToken] = useState("");
+  const [business, setBusiness] = useState(businesses[0]?.id ?? "");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy("Checking the token…");
+    setError(null);
+    try {
+      const r = await callShipping({ action: "connect", token, business: business || null });
+      const id = (r.account as ShippingAccount).id;
+      setBusy("Importing shipments…");
+      await syncShipping(id, (n) => setBusy(`Importing shipments… ${n.toLocaleString()}`));
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(null);
+    }
+  }
+
+  return (
+    <form className="stack-sm sales-form" onSubmit={submit}>
+      <h3>Connect Easyship</h3>
+      <p className="muted small">
+        Each label is matched to the store order it was bought for, so Profit shows what shipping really cost against what the customer
+        paid (as confirmed by Stripe) — plus labels with no order, paid orders with no label, and refunded orders that were already shipped.
+        Label costs count as a shipping expense.
+      </p>
+      <EasyshipHelp />
+      <label className="field">API access token<input required type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="prod_…" /></label>
+      {businesses.length > 0 && (
+        <label className="field">Labels with no store order belong to
+          <select value={business} onChange={(e) => setBusiness(e.target.value)}>
+            {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            <option value="">Not assigned</option>
+          </select>
+        </label>
+      )}
+      {error && <p className="error">{error}</p>}
+      <div className="actions tight">
+        <button className="primary" disabled={!!busy}>{busy ?? "Connect and import shipments"}</button>
         <button type="button" className="link" onClick={onDone} disabled={!!busy}>Cancel</button>
       </div>
     </form>

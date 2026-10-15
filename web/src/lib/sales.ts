@@ -99,11 +99,55 @@ export async function syncPayments(account: string, onProgress?: (payments: numb
   return total;
 }
 
+export interface ShippingAccount {
+  id: string;
+  business_id: string | null;
+  provider: "easyship";
+  name: string;
+  status: "active" | "error";
+  last_error: string | null;
+  last_synced_at: string | null;
+  backfill_cursor: string | null;
+  created_at: string;
+}
+
+export function useShippingAccounts(enabled = true) {
+  const [accounts, setAccounts] = useState<ShippingAccount[] | null>(null);
+  const reload = useCallback(async () => {
+    if (!enabled) return setAccounts([]);
+    const { data } = await supabase.from("shipping_accounts")
+      .select("id, business_id, provider, name, status, last_error, last_synced_at, backfill_cursor, created_at")
+      .eq("user_id", accountId()).order("created_at");
+    setAccounts((data ?? []) as ShippingAccount[]);
+  }, [enabled]);
+  useEffect(() => { reload(); }, [reload]);
+  return { accounts, reload };
+}
+
+export async function callShipping(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data, error } = await supabase.functions.invoke("shipping-sync", { body: { ...body, account: accountId(), time_zone: timeZone() } });
+  if (error) throw new Error(await fnError(error, "Couldn't reach Easyship"));
+  return data as Record<string, unknown>;
+}
+
+/** Syncs an Easyship account until it's caught up (the first run imports its whole history). */
+export async function syncShipping(account: string, onProgress?: (shipments: number) => void): Promise<number> {
+  let total = 0;
+  for (let round = 0; round < 60; round++) {
+    const r = await callShipping({ action: "sync", shipping_account: account });
+    total += Number(r.shipments) || 0;
+    onProgress?.(total);
+    if (r.done) break;
+  }
+  return total;
+}
+
 const stale = (at: string | null) => !at || Date.now() - new Date(at).getTime() > 3600_000;
 
 /** Stores and Stripe synced over an hour ago get refreshed in the background; failures show on the account. */
-export async function refreshStale(channels: Channel[], accounts: PaymentAccount[] = []): Promise<boolean> {
+export async function refreshStale(channels: Channel[], accounts: PaymentAccount[] = [], shipping: ShippingAccount[] = []): Promise<boolean> {
   const jobs = [
+    ...shipping.filter((a) => a.status === "active" && (stale(a.last_synced_at) || a.backfill_cursor !== "done")).map((a) => syncShipping(a.id)),
     ...channels.filter((c) => c.kind === "woocommerce" && c.status === "active" && stale(c.last_synced_at)).map((c) => syncStore(c.id)),
     ...accounts.filter((a) => a.status === "active" && (stale(a.last_synced_at) || a.backfill_cursor !== "done")).map((a) => syncPayments(a.id)),
   ];
