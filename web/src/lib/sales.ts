@@ -12,10 +12,12 @@ export interface Channel {
   status: "active" | "error";
   last_error: string | null;
   last_synced_at: string | null;
+  /** WooCommerce sync progress; "done" once every order has been imported. */
+  backfill_cursor: string | null;
   created_at: string;
 }
 
-const CHANNEL_COLUMNS = "id, business_id, kind, name, store_url, status, last_error, last_synced_at, created_at";
+const CHANNEL_COLUMNS = "id, business_id, kind, name, store_url, status, last_error, last_synced_at, backfill_cursor, created_at";
 
 export function useChannels(enabled = true) {
   const [channels, setChannels] = useState<Channel[] | null>(null);
@@ -148,7 +150,7 @@ const stale = (at: string | null) => !at || Date.now() - new Date(at).getTime() 
 export async function refreshStale(channels: Channel[], accounts: PaymentAccount[] = [], shipping: ShippingAccount[] = []): Promise<boolean> {
   const jobs = [
     ...shipping.filter((a) => a.status === "active" && (stale(a.last_synced_at) || a.backfill_cursor !== "done")).map((a) => syncShipping(a.id)),
-    ...channels.filter((c) => c.kind === "woocommerce" && c.status === "active" && stale(c.last_synced_at)).map((c) => syncStore(c.id)),
+    ...channels.filter((c) => c.kind === "woocommerce" && c.status === "active" && (stale(c.last_synced_at) || c.backfill_cursor !== "done")).map((c) => syncStore(c.id)),
     ...accounts.filter((a) => a.status === "active" && (stale(a.last_synced_at) || a.backfill_cursor !== "done")).map((a) => syncPayments(a.id)),
   ];
   const results = await Promise.allSettled(jobs);

@@ -166,6 +166,13 @@ export function Profit({ year, biz, periodBuys, trips, profile, saveProfile }: {
           <b className={`big-number sm ${pnl.profit < 0 ? "neg" : ""}`}>{money(pnl.profit)}</b><span className="muted small">margin {pct(pnl.margin)}</span></div>
       </div>
 
+      {channels.some((c) => c.kind === "woocommerce" && c.backfill_cursor !== "done") && (
+        <p className="banner warn">
+          Your store's orders are still importing{syncing ? " (running now)" : " — open Settings → Sales and choose Continue import"}. Until it
+          finishes, some Stripe payments show up as having no store order and items sold aren't costed yet.
+        </p>
+      )}
+
       {(pnl.unmatched.length > 0 || errored.length > 0 || data.unskued.length > 0 || syncing) && (
         <div className="gap-chips" role="list" aria-label="To tidy up">
           {syncing && <span role="listitem" className="gap-chip muted">Syncing your store…</span>}

@@ -118,13 +118,15 @@ function ChannelRow({ c, orders, canEdit, businesses, reload, onImport }: {
           <b>{c.name}</b> <span className="pill">{c.kind === "woocommerce" ? "WooCommerce" : "Imported files"}</span>
           <div className="muted small">
             {orders !== undefined && `${orders.toLocaleString()} orders · `}
-            {c.kind === "woocommerce" ? (c.last_synced_at ? `synced ${relative(c.last_synced_at)}` : "not synced yet") : `added ${shortDate(c.created_at)}`}
+            {c.kind === "woocommerce"
+              ? (c.backfill_cursor !== "done" ? "importing all orders…" : c.last_synced_at ? `synced ${relative(c.last_synced_at)}` : "not synced yet")
+              : `added ${shortDate(c.created_at)}`}
           </div>
         </div>
         {canEdit && (
           <div className="actions tight">
             {c.kind === "woocommerce"
-              ? <button className="btn sm" onClick={sync} disabled={!!busy}>{busy ?? "Sync now"}</button>
+              ? <button className="btn sm" onClick={sync} disabled={!!busy}>{busy ?? (c.backfill_cursor !== "done" ? "Continue import" : "Sync now")}</button>
               : <button className="btn sm" onClick={onImport}>Import more</button>}
             <button className="link danger small" onClick={disconnect}>{c.kind === "woocommerce" ? "Disconnect" : "Remove"}</button>
           </div>

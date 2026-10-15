@@ -303,7 +303,7 @@ Connect where you sell in **Settings → Sales** and **Reports → Profit** show
 
 - **WooCommerce:** create a *Read* REST API key (WooCommerce → Settings → Advanced → REST API) and paste the store address, key and
   secret. The `sales-sync` function checks the key, stores it encrypted in Vault (`sales_secret_set/get`, service role only) and copies
-  orders (changed-since cursor, a few pages per call) plus the product catalog with SKUs and stock. Fees come from the payment plugin's
+  every order by id (a few pages per call), then on each sync the orders changed since the last one plus the product catalog with SKUs and stock. Fees come from the payment plugin's
   order notes (Stripe, WooPayments, PayPal, Square…). Stores re-sync when Profit opens if the last sync is over an hour old, or with
   **Sync now**. Store addresses must be public https sites; redirects are re-checked.
 - **eBay, Etsy, Shopify or any CSV:** imported in the browser. eBay's transaction report brings fees, refunds and shipping labels;
