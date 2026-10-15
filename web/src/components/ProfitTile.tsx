@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { accountId } from "../lib/account";
 import { money } from "../lib/format";
-import { buildPnl, type PBuyLine, type PSaleLine, type PTrip, type Pnl } from "../lib/pnl";
+import { buildPnl, costBasis, type PBuyLine, type PSaleLine, type PTrip, type Pnl } from "../lib/pnl";
+import { costResolver, poolStats, type CostPool, type SkuCost } from "../lib/costs";
 import { reconcile, type RAccount, type RChannel, type ROrder, type RPayment } from "../lib/reconcile";
 import { reconcileShipping, type RShipment } from "../lib/shipping";
 
@@ -26,7 +27,7 @@ export function ProfitTile() {
       const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
       const to = now.toISOString().slice(0, 10);
       const own = accountId();
-      const [orders, payments, shipments, lines, inv, buys, trips] = await Promise.all([
+      const [orders, payments, shipments, lines, inv, buys, trips, pools, skuCosts, products, untagged] = await Promise.all([
         supabase.from("sales_orders")
           .select("id, order_date, status, items_total, shipping_charged, tax_collected, refunded, fees, channel_id, external_id, order_number, business_id, payment_method, payment_ref")
           .eq("user_id", own).gte("order_date", from).limit(5000),
@@ -40,6 +41,10 @@ export function ProfitTile() {
         supabase.from("inventory_lines").select(BUY_COLUMNS).eq("user_id", own).not("woo_sku", "is", null).limit(20000),
         supabase.from("inventory_lines").select(BUY_COLUMNS).eq("user_id", own).gte("purchase_date", from).limit(5000),
         supabase.from("trips").select("trip_date, miles").eq("user_id", own).gte("trip_date", from),
+        supabase.from("cost_pools").select("id, name, purchase_words, product_words, unit_cost, position").eq("user_id", own),
+        supabase.from("sku_costs").select("sku, unit_cost, pool_id").eq("user_id", own).limit(20000),
+        supabase.from("sales_products").select("sku, name, cost").eq("user_id", own).limit(20000),
+        supabase.from("inventory_lines").select(BUY_COLUMNS).eq("user_id", own).is("woo_sku", null).eq("tax_line", "cogs").limit(20000),
       ]);
       if (gone || orders.error || lines.error) return;
       const merged = accounts?.length
@@ -54,6 +59,13 @@ export function ProfitTile() {
       setPnl(buildPnl({
         from, to, saleLines: (lines.data ?? []) as unknown as PSaleLine[], orders: merged, otherExpenses: labels,
         inventoryBuys: (inv.data ?? []) as PBuyLine[], periodBuys, trips: (trips.data ?? []) as PTrip[],
+        // Same cost order as the Profit tab: your SKU cost → store cost → tagged receipts → product line.
+        costOf: costResolver({
+          pools: (pools.data ?? []) as CostPool[], skuCosts: (skuCosts.data ?? []) as SkuCost[],
+          storeProducts: (products.data ?? []) as { sku: string; name: string; cost: number | null }[],
+          receiptBasis: costBasis((inv.data ?? []) as PBuyLine[], to),
+          stats: poolStats((pools.data ?? []) as CostPool[], (untagged.data ?? []) as PBuyLine[], to),
+        }),
       }));
     })();
     return () => { gone = true; };
