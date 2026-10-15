@@ -7,7 +7,7 @@
 /* ---------- 1. Gmail tokens in Vault ---------- */
 
 alter table public.email_connections add column if not exists token_secret_id uuid;
-alter table public.email_connections alter column refresh_token drop not null; -- dropped below once moved
+alter table public.email_connections alter column refresh_token set default ''; -- emptied and locked below
 
 /** Stores (or replaces) a connection's Gmail refresh token in Vault. Service role only. */
 create or replace function public.gmail_token_set(p_connection uuid, p_token text) returns void
@@ -42,7 +42,6 @@ begin
   end if;
   return old;
 end $$;
-drop trigger if exists email_connections_forget_token on public.email_connections;
 create trigger email_connections_forget_token after delete on public.email_connections
   for each row execute function public.email_connection_forget_token();
 
@@ -52,16 +51,18 @@ revoke all on function public.email_connection_forget_token() from public, anon,
 grant execute on function public.gmail_token_set(uuid, text) to service_role;
 grant execute on function public.gmail_token_get(uuid) to service_role;
 
--- Move any tokens already saved, then drop the plain-text column.
+-- Move any tokens already saved into Vault, then empty the plain-text column and lock it so it can't hold a
+-- token again (kept; nothing reads it any more).
 do $$
 declare
   r record;
 begin
-  for r in select id, refresh_token from public.email_connections where refresh_token is not null loop
+  for r in select id, refresh_token from public.email_connections where refresh_token <> '' loop
     perform public.gmail_token_set(r.id, r.refresh_token);
   end loop;
+  update public.email_connections set refresh_token = '' where refresh_token <> '';
 end $$;
-alter table public.email_connections drop column refresh_token;
+alter table public.email_connections add constraint email_connections_no_plain_token check (refresh_token = '');
 
 /* ---------- 2. Two-step sign-in ---------- */
 
@@ -137,13 +138,11 @@ begin
                            'processed_messages', 'api_tokens', 'oauth_tokens', 'account_members', 'account_invites',
                            'businesses'] loop
     continue when to_regclass('public.' || t) is null; -- businesses: only once that migration ran
-    execute format('drop policy if exists "two-step sign-in" on public.%I', t);
     execute format(
       'create policy "two-step sign-in" on public.%I as restrictive for all to authenticated
          using ((select public.mfa_satisfied())) with check ((select public.mfa_satisfied()))', t);
   end loop;
 end $$;
-drop policy if exists "two-step sign-in" on storage.objects;
 create policy "two-step sign-in" on storage.objects as restrictive for all to authenticated
   using (bucket_id <> 'receipts' or (select public.mfa_satisfied()))
   with check (bucket_id <> 'receipts' or (select public.mfa_satisfied()));
