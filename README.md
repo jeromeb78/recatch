@@ -100,6 +100,7 @@ supabase functions deploy ingest-page --no-verify-jwt
 supabase functions deploy categorize-items
 supabase functions deploy sales-sync
 supabase functions deploy payments-sync
+supabase functions deploy shipping-sync
 supabase functions deploy mcp --no-verify-jwt
 ```
 
@@ -302,7 +303,7 @@ Connect where you sell in **Settings → Sales** and **Reports → Profit** show
 
 - **WooCommerce:** create a *Read* REST API key (WooCommerce → Settings → Advanced → REST API) and paste the store address, key and
   secret. The `sales-sync` function checks the key, stores it encrypted in Vault (`sales_secret_set/get`, service role only) and copies
-  orders (changed-since cursor, a few pages per call) plus the product catalog with SKUs and stock. Fees come from the payment plugin's
+  every order by id (a few pages per call), then on each sync the orders changed since the last one plus the product catalog with SKUs and stock. Fees come from the payment plugin's
   order notes (Stripe, WooPayments, PayPal, Square…). Stores re-sync when Profit opens if the last sync is over an hour old, or with
   **Sync now**. Store addresses must be public https sites; redirects are re-checked.
 - **eBay, Etsy, Shopify or any CSV:** imported in the browser. eBay's transaction report brings fees, refunds and shipping labels;
@@ -316,6 +317,14 @@ Connect where you sell in **Settings → Sales** and **Reports → Profit** show
   as sales of their own. **Checked against Stripe** on the Profit tab lists charges with no order, Stripe-paid orders with no charge,
   amount differences and status disagreements. Logic: `web/src/lib/reconcile.ts`, `supabase/functions/_shared/stripe.ts`;
   migration `20261015152151_payments.sql`.
+- **Easyship (shipping costs):** paste an API access token (shipment read). `shipping-sync` imports every shipment's label cost
+  (bought labels only; voided or cancelled labels cost nothing), courier, tracking number and the store order number it was
+  bought for into `shipments`. Labels are matched to orders by that number (WooCommerce orders first), after Stripe's corrections.
+  Label costs count as a "Shipping labels" expense (receipts from Easyship are then left out so they aren't counted twice), and
+  **Shipping vs. Easyship labels** on the Profit tab compares what customers paid for shipping against label cost and lists
+  orders that lost money on shipping, refunded orders already shipped, labels with no order, and paid orders with no label (only
+  for channels that ship with Easyship). Logic: `web/src/lib/shipping.ts`, `supabase/functions/_shared/easyship.ts`; migration
+  `20261015173704_shipping.sql`.
 - Only order totals, dates, SKUs and product names are kept — never buyer names, emails, addresses or card details.
 
 Profit = sales (items + shipping, without sales tax) − refunds − cost of goods − fees − business expenses on receipts − mileage.

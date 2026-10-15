@@ -139,7 +139,7 @@ Deno.serve(async (req) => {
 
     if (body?.action === "sync" || body?.action === "rekey") {
       const { data: channel } = await db.from("sales_channels")
-        .select("id, user_id, business_id, kind, store_url, synced_through, last_synced_at").eq("id", String(body.channel ?? "")).maybeSingle();
+        .select("id, user_id, business_id, kind, store_url, synced_through, last_synced_at, backfill_cursor").eq("id", String(body.channel ?? "")).maybeSingle();
       if (!channel || channel.user_id !== owner) return json({ error: "Unknown store" }, 404);
       if (channel.kind !== "woocommerce" || !channel.store_url) return json({ error: "This channel is imported from files" }, 400);
 
@@ -157,26 +157,34 @@ Deno.serve(async (req) => {
       const [key, secret] = stored.split(":");
 
       try {
-        // Orders changed since the last run, oldest change first, so the cursor only moves forward.
-        const since = channel.synced_through ? new Date(new Date(channel.synced_through).getTime() - 1000).toISOString() : null;
-        let saved = 0, cursor = channel.synced_through as string | null, done = false;
-        for (let page = 1; page <= PAGES_PER_CALL; page++) {
-          const params: Record<string, string> = { per_page: String(PER_PAGE), page: String(page), status: "any", orderby: "modified", order: "asc", dates_are_gmt: "true" };
-          if (since) params.modified_after = since.replace(/\.\d+Z$/, "");
+        // Two passes, both paged by order id (stores don't reliably sort by modified date, so a "latest change" cursor can
+        // skip orders): first every order the store has, then each later sync re-reads orders changed since the last one.
+        // Progress is kept in backfill_cursor — "<page>" during history, "inc:<page>:<pass start>" mid-update, "done" between.
+        const state = (channel.backfill_cursor as string | null) ?? "";
+        const started = new Date().toISOString();
+        const history = state !== "done" && !state.startsWith("inc:");
+        const [, incPage, incStart] = state.match(/^inc:(\d+):(.+)$/) ?? [];
+        let page = history ? Number(state) || 1 : Number(incPage) || 1;
+        const passStart = history ? (state ? channel.synced_through as string : started) : incStart || started;
+        const since = history ? null : new Date(new Date(channel.synced_through ?? 0).getTime() - 60_000).toISOString().replace(/\.\d+Z$/, "");
+        let saved = 0, done = false;
+        for (let i = 0; i < PAGES_PER_CALL; i++) {
+          const params: Record<string, string> = { per_page: String(PER_PAGE), page: String(page), status: "any", orderby: "id", order: "asc", dates_are_gmt: "true" };
+          if (since) params.modified_after = since;
           const { body: orders, totalPages } = await wooGet(channel.store_url, "orders", key, secret, params);
           saved += await saveOrders(owner, channel, orders as WooOrder[]);
-          for (const o of orders as WooOrder[]) {
-            const m = o.date_modified_gmt ? `${o.date_modified_gmt.replace(/Z$/, "")}Z` : null;
-            if (m && (!cursor || m > cursor)) cursor = m;
-          }
           if (page >= totalPages || !(orders as unknown[]).length) { done = true; break; }
+          page++;
         }
+        const cursor = done ? "done" : history ? String(page) : `inc:${page}:${passStart}`;
         // Refresh the catalog once orders are caught up (and at most every few hours).
         let products: number | undefined;
         const stale = !channel.last_synced_at || Date.now() - new Date(channel.last_synced_at).getTime() > 3 * 3600_000;
-        if (done && (stale || !channel.synced_through)) products = await syncProducts(owner, channel.id, channel.store_url, key, secret);
+        if (done && (stale || history)) products = await syncProducts(owner, channel.id, channel.store_url, key, secret);
         await db.from("sales_channels").update({
-          synced_through: cursor, status: "active", last_error: null, ...(done ? { last_synced_at: new Date().toISOString() } : {}),
+          backfill_cursor: cursor, status: "active", last_error: null,
+          // The next update reads changes since this pass began, so nothing changed during it is missed.
+          ...(done ? { synced_through: passStart, last_synced_at: new Date().toISOString() } : history && !state ? { synced_through: passStart } : {}),
         }).eq("id", channel.id);
         return json({ orders: saved, done, products });
       } catch (e) {

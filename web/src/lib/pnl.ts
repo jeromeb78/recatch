@@ -119,6 +119,8 @@ export function buildPnl(args: {
   /** Receipt items dated within the period — for expenses. */
   periodBuys: PBuyLine[];
   trips: PTrip[];
+  /** Costs from connected services, e.g. shipping labels from Easyship: { key, label, date, amount }. */
+  otherExpenses?: { key: string; label: string; date: string; amount: number }[];
 }): Pnl {
   const { from, to } = args;
   const basis = costBasis(args.inventoryBuys, to);
@@ -183,7 +185,14 @@ export function buildPnl(args: {
     exp.set(l.tax_line!, (exp.get(l.tax_line!) ?? 0) + v);
     month(l.purchase_date!).expenses += v;
   }
-  const expenses = [...exp].map(([line, amount]) => ({ line, label: lineLabel(line), amount: r2(amount) })).sort((a, b) => b.amount - a.amount);
+  const labels = new Map<string, string>();
+  for (const e of args.otherExpenses ?? []) {
+    if (!inRange(e.date, from, to) || !e.amount) continue;
+    labels.set(e.key, e.label);
+    exp.set(e.key, (exp.get(e.key) ?? 0) + e.amount);
+    month(e.date).expenses += e.amount;
+  }
+  const expenses = [...exp].map(([line, amount]) => ({ line, label: labels.get(line) ?? lineLabel(line), amount: r2(amount) })).sort((a, b) => b.amount - a.amount);
   const expenseTotal = r2(expenses.reduce((a, e) => a + e.amount, 0));
 
   let mileage = 0;
