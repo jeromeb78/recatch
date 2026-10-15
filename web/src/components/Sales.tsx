@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase";
 import { accountId, useAccount } from "../lib/account";
 import { useBusinesses } from "../lib/businesses";
 import { money, relative, shortDate } from "../lib/format";
-import { callSales, saveImport, syncStore, useChannels, type Channel } from "../lib/sales";
+import { callPayments, callSales, saveImport, syncPayments, syncStore, useChannels, usePaymentAccounts, type Channel, type PaymentAccount } from "../lib/sales";
 import { detectPreset, FIELD_LABEL, importSales, parseCsv, PRESETS, type Field, type ImportResult, type Mapping, type Preset } from "../lib/salesImport";
 
 /** Settings → Sales: connect a WooCommerce store or import marketplace files, so reports can show profit. */
@@ -12,8 +12,9 @@ export function SalesSection() {
   const canSee = can("reports");
   const canEdit = can("reports", "edit");
   const { channels, reload } = useChannels(canSee);
+  const { accounts, reload: reloadAccounts } = usePaymentAccounts(canSee);
   const { active: businesses } = useBusinesses();
-  const [mode, setMode] = useState<null | "woo" | { importInto?: string }>(null);
+  const [mode, setMode] = useState<null | "woo" | "stripe" | { importInto?: string }>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -30,7 +31,8 @@ export function SalesSection() {
       <h2>Sales</h2>
       <p className="muted small">
         Connect where you sell to see real profit: what you sold, minus what the goods cost (from your receipts), fees and expenses.
-        Only order totals, dates, SKUs and product names are copied — never customer names or addresses.
+        If Stripe takes your payments, connect it too — Stripe's charges, refunds and fees then win over the store's numbers.
+        Only totals, dates, SKUs and product names are copied — never customer names, emails, addresses or card details.
       </p>
 
       {channels === null ? <p className="muted">Loading…</p> : channels.length > 0 && (
@@ -42,14 +44,22 @@ export function SalesSection() {
         </ul>
       )}
 
+      {accounts && accounts.length > 0 && (
+        <ul className="channel-list">
+          {accounts.map((a) => <PaymentRow key={a.id} a={a} canEdit={canEdit} businesses={businesses} reload={reloadAccounts} />)}
+        </ul>
+      )}
+
       {canEdit && mode === null && (
         <div className="actions">
           <button className="primary" onClick={() => setMode("woo")}>Connect WooCommerce</button>
+          <button onClick={() => setMode("stripe")}>Connect Stripe</button>
           <button onClick={() => setMode({})}>Import eBay, Etsy or Shopify sales</button>
         </div>
       )}
       {mode === "woo" && <ConnectWoo businesses={businesses} onDone={() => { setMode(null); reload(); }} />}
-      {mode !== null && mode !== "woo" && (
+      {mode === "stripe" && <ConnectStripe businesses={businesses} onDone={() => { setMode(null); reloadAccounts(); }} />}
+      {mode !== null && mode !== "woo" && mode !== "stripe" && (
         <ImportFile channels={(channels ?? []).filter((c) => c.kind === "csv")} businesses={businesses} into={mode.importInto}
           onDone={() => { setMode(null); reload(); }} />
       )}
@@ -126,6 +136,165 @@ function ChannelRow({ c, orders, canEdit, businesses, reload, onImport }: {
       {rekey && <WooKeys channel={c.id} onDone={() => { setRekey(false); reload(); }} />}
       {msg && <p className="muted small">{msg}</p>}
     </li>
+  );
+}
+
+function PaymentRow({ a, canEdit, businesses, reload }: {
+  a: PaymentAccount; canEdit: boolean; businesses: { id: string; name: string }[]; reload: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [rekey, setRekey] = useState(false);
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    supabase.from("payments").select("id", { count: "exact", head: true }).eq("account_id", a.id).then(({ count }) => setCount(count ?? 0));
+  }, [a.id, a.last_synced_at]);
+
+  async function sync() {
+    setBusy("Syncing…");
+    setMsg(null);
+    try {
+      const n = await syncPayments(a.id, (k) => setBusy(`Syncing… ${k.toLocaleString()} payments`));
+      setMsg(n ? `${n.toLocaleString()} payment${n === 1 ? "" : "s"} updated` : "Up to date");
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+    setBusy(null);
+    reload();
+  }
+  async function setBusiness(id: string) {
+    const { error } = await supabase.from("payment_accounts").update({ business_id: id || null }).eq("id", a.id);
+    if (error) setMsg(error.message);
+    reload();
+  }
+  async function disconnect() {
+    if (!confirm("Disconnect Stripe? Its saved key and the payments copied into Receipt Catcher are deleted. Nothing changes in Stripe.")) return;
+    const { error } = await supabase.from("payment_accounts").delete().eq("id", a.id);
+    if (error) setMsg(error.message);
+    reload();
+  }
+
+  return (
+    <li className="channel">
+      <div className="row-between">
+        <div className="grow">
+          <b>{a.name}</b> <span className="pill">Stripe{a.livemode ? "" : " · test mode"}</span>
+          <div className="muted small">
+            {count !== null && `${count.toLocaleString()} payments · `}
+            {a.backfill_cursor !== "done" ? "importing history…" : a.last_synced_at ? `synced ${relative(a.last_synced_at)}` : "not synced yet"}
+            {" · source of truth for sales, refunds and fees"}
+          </div>
+        </div>
+        {canEdit && (
+          <div className="actions tight">
+            <button className="btn sm" onClick={sync} disabled={!!busy}>{busy ?? (a.backfill_cursor !== "done" ? "Continue import" : "Sync now")}</button>
+            <button className="link danger small" onClick={disconnect}>Disconnect</button>
+          </div>
+        )}
+      </div>
+      {businesses.length > 0 && (
+        <label className="inline-select">
+          <span className="muted small">Business</span>
+          <select value={a.business_id ?? ""} onChange={(e) => setBusiness(e.target.value)} disabled={!canEdit}>
+            <option value="">Not assigned</option>
+            {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </label>
+      )}
+      {a.status === "error" && (
+        <p className="banner warn">
+          {a.last_error ?? "The last sync failed."}{" "}
+          {canEdit && <button className="link" onClick={() => setRekey(true)}>Use a new key</button>}
+        </p>
+      )}
+      {rekey && <StripeKey account={a.id} onDone={() => { setRekey(false); reload(); }} />}
+      {msg && <p className="muted small">{msg}</p>}
+    </li>
+  );
+}
+
+function StripeHelp() {
+  return (
+    <ol className="muted small help-steps">
+      <li>In Stripe, open <b>Developers → API keys</b> and click <b>Create restricted key</b> (choose “Providing this key to another website”
+        if asked, and name it “Receipt Catcher”).</li>
+      <li>Set <b>Charges and Refunds</b> to <b>Read</b> and <b>Balance</b> to <b>Read</b> (optionally <b>Disputes</b> to Read). Leave everything else as None.</li>
+      <li>Create the key and paste it here (it starts with <span className="mono">rk_live_</span>). It's stored encrypted and can only read — it can't move money.</li>
+    </ol>
+  );
+}
+
+function StripeKey({ account, onDone }: { account: string; onDone: () => void }) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await callPayments({ action: "rekey", payment_account: account, key });
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+    setBusy(false);
+  }
+  return (
+    <form className="stack-sm" onSubmit={submit}>
+      <StripeHelp />
+      <label className="field">Restricted key<input required type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="rk_live_…" /></label>
+      {error && <p className="error">{error}</p>}
+      <div className="actions tight"><button className="primary" disabled={busy}>{busy ? "Checking…" : "Save key"}</button></div>
+    </form>
+  );
+}
+
+function ConnectStripe({ businesses, onDone }: { businesses: { id: string; name: string }[]; onDone: () => void }) {
+  const [key, setKey] = useState("");
+  const [business, setBusiness] = useState(businesses[0]?.id ?? "");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy("Checking the key…");
+    setError(null);
+    try {
+      const r = await callPayments({ action: "connect", key, business: business || null });
+      const id = (r.account as PaymentAccount).id;
+      setBusy("Importing payments…");
+      await syncPayments(id, (n) => setBusy(`Importing payments… ${n.toLocaleString()}`));
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(null);
+    }
+  }
+
+  return (
+    <form className="stack-sm sales-form" onSubmit={submit}>
+      <h3>Connect Stripe</h3>
+      <p className="muted small">
+        Stripe becomes the source of truth for money: each WooCommerce order takes Stripe's charged amount, refunds and actual fee,
+        and payments with no store order still count as sales. Products and SKUs still come from the store.
+      </p>
+      <StripeHelp />
+      <label className="field">Restricted key<input required type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="rk_live_…" /></label>
+      {businesses.length > 0 && (
+        <label className="field">Payments with no store order belong to
+          <select value={business} onChange={(e) => setBusiness(e.target.value)}>
+            {businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            <option value="">Not assigned</option>
+          </select>
+        </label>
+      )}
+      {error && <p className="error">{error}</p>}
+      <div className="actions tight">
+        <button className="primary" disabled={!!busy}>{busy ?? "Connect and import payments"}</button>
+        <button type="button" className="link" onClick={onDone} disabled={!!busy}>Cancel</button>
+      </div>
+    </form>
   );
 }
 

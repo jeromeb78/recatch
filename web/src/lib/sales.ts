@@ -51,11 +51,63 @@ export async function syncStore(channel: string, onProgress?: (orders: number) =
   return total;
 }
 
-/** Stores synced over an hour ago get refreshed in the background; failures show on the channel. */
-export async function refreshStale(channels: Channel[]): Promise<boolean> {
-  const stale = channels.filter((c) => c.kind === "woocommerce" && c.status === "active"
-    && (!c.last_synced_at || Date.now() - new Date(c.last_synced_at).getTime() > 3600_000));
-  const results = await Promise.allSettled(stale.map((c) => syncStore(c.id)));
+export interface PaymentAccount {
+  id: string;
+  business_id: string | null;
+  provider: "stripe";
+  name: string;
+  livemode: boolean;
+  status: "active" | "error";
+  last_error: string | null;
+  last_synced_at: string | null;
+  backfill_cursor: string | null;
+  created_at: string;
+}
+
+export function usePaymentAccounts(enabled = true) {
+  const [accounts, setAccounts] = useState<PaymentAccount[] | null>(null);
+  const reload = useCallback(async () => {
+    if (!enabled) return setAccounts([]);
+    const { data } = await supabase.from("payment_accounts")
+      .select("id, business_id, provider, name, livemode, status, last_error, last_synced_at, backfill_cursor, created_at")
+      .eq("user_id", accountId()).order("created_at");
+    setAccounts((data ?? []) as PaymentAccount[]);
+  }, [enabled]);
+  useEffect(() => { reload(); }, [reload]);
+  return { accounts, reload };
+}
+
+const timeZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
+};
+
+export async function callPayments(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data, error } = await supabase.functions.invoke("payments-sync", { body: { ...body, account: accountId(), time_zone: timeZone() } });
+  if (error) throw new Error(await fnError(error, "Couldn't reach Stripe"));
+  return data as Record<string, unknown>;
+}
+
+/** Syncs a Stripe account until it's caught up (the first run imports its whole history). */
+export async function syncPayments(account: string, onProgress?: (payments: number) => void): Promise<number> {
+  let total = 0;
+  for (let round = 0; round < 60; round++) {
+    const r = await callPayments({ action: "sync", payment_account: account });
+    total += Number(r.payments) || 0;
+    onProgress?.(total);
+    if (r.done) break;
+  }
+  return total;
+}
+
+const stale = (at: string | null) => !at || Date.now() - new Date(at).getTime() > 3600_000;
+
+/** Stores and Stripe synced over an hour ago get refreshed in the background; failures show on the account. */
+export async function refreshStale(channels: Channel[], accounts: PaymentAccount[] = []): Promise<boolean> {
+  const jobs = [
+    ...channels.filter((c) => c.kind === "woocommerce" && c.status === "active" && stale(c.last_synced_at)).map((c) => syncStore(c.id)),
+    ...accounts.filter((a) => a.status === "active" && (stale(a.last_synced_at) || a.backfill_cursor !== "done")).map((a) => syncPayments(a.id)),
+  ];
+  const results = await Promise.allSettled(jobs);
   return results.some((r) => r.status === "fulfilled" && r.value > 0);
 }
 

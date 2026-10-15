@@ -99,6 +99,7 @@ supabase functions deploy process-upload
 supabase functions deploy ingest-page --no-verify-jwt
 supabase functions deploy categorize-items
 supabase functions deploy sales-sync
+supabase functions deploy payments-sync
 supabase functions deploy mcp --no-verify-jwt
 ```
 
@@ -307,7 +308,15 @@ Connect where you sell in **Settings → Sales** and **Reports → Profit** show
 - **eBay, Etsy, Shopify or any CSV:** imported in the browser. eBay's transaction report brings fees, refunds and shipping labels;
   Etsy's order-items file and Shopify's orders export bring sales; *Other* lets you pick the columns. Re-importing the same orders
   updates them.
-- Only order totals, dates, SKUs and product names are kept — never buyer names, emails or addresses.
+- **Stripe (source of truth for money):** paste a *restricted* key with Read on Charges and Refunds and on Balance (full secret
+  keys are refused). `payments-sync` imports the account's charge history, then charges, refunds and disputes since the last sync,
+  with Stripe's actual fee, into `payments`. Each charge is matched to its WooCommerce order by the transaction id Woo saves
+  (`ch_…`/`pi_…`), else the `order_id` in the charge metadata (checked against the store's `site_url`). A matched order takes
+  Stripe's amount, refunds, fee and outcome; it keeps its items (for cost of goods) and sales tax. Charges with no store order count
+  as sales of their own. **Checked against Stripe** on the Profit tab lists charges with no order, Stripe-paid orders with no charge,
+  amount differences and status disagreements. Logic: `web/src/lib/reconcile.ts`, `supabase/functions/_shared/stripe.ts`;
+  migration `20261015152151_payments.sql`.
+- Only order totals, dates, SKUs and product names are kept — never buyer names, emails, addresses or card details.
 
 Profit = sales (items + shipping, without sales tax) − refunds − cost of goods − fees − business expenses on receipts − mileage.
 Cost of goods is units sold × each SKU's average landed cost across everything bought with that SKU, so purchases need the SKU they

@@ -13,6 +13,8 @@ export interface WooOrder {
   shipping_total?: string;
   total_tax?: string;
   total?: string;
+  payment_method?: string;
+  transaction_id?: string;
   line_items?: { name?: string; sku?: string | null; quantity?: number; total?: string }[];
   refunds?: { total?: string }[];
   meta_data?: { key?: string; value?: unknown }[];
@@ -31,6 +33,9 @@ export interface SaleOrder {
   refunded: number;
   fees: number;
   total: number;
+  payment_method: string | null;
+  /** The processor's id for the payment (Stripe ch_/pi_), to match it to the processor's records. */
+  payment_ref: string | null;
 }
 
 export interface SaleLine { sku: string | null; name: string; quantity: number; total: number }
@@ -53,6 +58,14 @@ const num = (v: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 const cents = (n: number) => Math.round(n * 100) / 100;
+
+/** Stripe charge or payment-intent id: WooCommerce's transaction id, else the Stripe plugin's intent note. */
+export function paymentRef(o: WooOrder): string | null {
+  const tx = o.transaction_id?.trim();
+  if (tx) return tx;
+  const intent = (o.meta_data ?? []).find((m) => m.key === "_stripe_intent_id")?.value;
+  return typeof intent === "string" && intent.trim() ? intent.trim() : null;
+}
 
 /** Payment-processor fees recorded on the order by Stripe, WooPayments, PayPal, Square… */
 export function orderFees(meta: WooOrder["meta_data"]): number {
@@ -89,6 +102,8 @@ export function mapOrder(o: WooOrder): { order: SaleOrder; lines: SaleLine[] } |
       refunded,
       fees: orderFees(o.meta_data),
       total: cents(num(o.total)),
+      payment_method: o.payment_method?.trim() || null,
+      payment_ref: paymentRef(o),
     },
     lines,
   };
