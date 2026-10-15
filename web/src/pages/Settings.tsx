@@ -9,6 +9,7 @@ import { MembershipSection, TeamSection } from "../components/Team";
 import { TwoStepSection } from "../components/TwoStep";
 import { BusinessesSection } from "../components/Businesses";
 import { PhoneSection } from "../components/Phone";
+import { SalesSection } from "../components/Sales";
 import { useConfirmIdentity } from "../components/ConfirmIdentity";
 import { accountId, useAccount } from "../lib/account";
 
@@ -53,6 +54,7 @@ function MemberSettings({ userId, email }: { userId: string; email: string }) {
       <MembershipSection userId={userId} />
       {can("settings") && <BusinessProfile userId={account.ownerId} readOnly={!can("settings", "edit")} />}
       {can("settings") && <BusinessesSection />}
+      <SalesSection />
       {can("settings") && <Categories readOnly={!can("settings", "edit")} />}
       {can("team", "edit") && <TeamSection userId={userId} />}
       <TwoStepSection />
@@ -202,6 +204,7 @@ function OwnerSettings({ userId, email }: { userId: string; email: string }) {
       <ClaudeSection />
       <BusinessProfile userId={userId} />
       <BusinessesSection />
+      <SalesSection />
       <Categories />
       <TeamSection userId={userId} />
       <TwoStepSection />

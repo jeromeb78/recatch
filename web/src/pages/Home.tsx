@@ -8,6 +8,7 @@ import { ChevronRight } from "../components/Icons";
 import ReceiptRow from "../components/ReceiptRow";
 import type { Receipt } from "../lib/types";
 import { accountId, useAccount } from "../lib/account";
+import { ProfitTile } from "../components/ProfitTile";
 
 const COLUMNS =
   "id, source, status, review_reasons, document_type, merchant, order_number, purchase_date, currency, total, category_id, files, created_at";
@@ -100,6 +101,8 @@ export default function Home() {
         </div>
       </section>
 
+      {can("reports") && <ProfitTile />}
+
       {reviewCount > 0 && (
         <Link to="/review" className="review-banner">
           <span className="count">{reviewCount}</span>
@@ -110,6 +113,7 @@ export default function Home() {
       )}
 
       {can("reports") && <div className="quick-links">
+        <Link to="/reports?tab=profit" className="quick-link"><b>Profit</b><span className="muted small">Sales minus goods, fees &amp; expenses</span></Link>
         <Link to="/reports?tab=inventory" className="quick-link"><b>Inventory &amp; COGS</b><span className="muted small">Cost per unit by SKU</span></Link>
         <Link to="/reports?tab=writeoffs" className="quick-link"><b>Write-offs</b><span className="muted small">Find tax deductions</span></Link>
         <Link to="/reports?tab=export" className="quick-link"><b>Export</b><span className="muted small">QuickBooks &amp; Xero</span></Link>

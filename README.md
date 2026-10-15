@@ -98,6 +98,7 @@ supabase functions deploy inbound-email --no-verify-jwt
 supabase functions deploy process-upload
 supabase functions deploy ingest-page --no-verify-jwt
 supabase functions deploy categorize-items
+supabase functions deploy sales-sync
 supabase functions deploy mcp --no-verify-jwt
 ```
 
@@ -293,6 +294,29 @@ assignment, add the cards used for it (last 4 digits only) and the stores that a
   worked out per business, each with its own answers (home office, inventory counts, store distances). Each sole
   proprietorship files its own Schedule C. S-corps, partnerships and C-corps get a reminder that they file a different return.
 - Receipts can be filtered by business or "Not assigned", and Reports warns when receipts aren't assigned yet.
+
+## Profit: sales, cost of goods and inventory on hand
+
+Connect where you sell in **Settings → Sales** and **Reports → Profit** shows what you actually make, built from your receipts.
+
+- **WooCommerce:** create a *Read* REST API key (WooCommerce → Settings → Advanced → REST API) and paste the store address, key and
+  secret. The `sales-sync` function checks the key, stores it encrypted in Vault (`sales_secret_set/get`, service role only) and copies
+  orders (changed-since cursor, a few pages per call) plus the product catalog with SKUs and stock. Fees come from the payment plugin's
+  order notes (Stripe, WooPayments, PayPal, Square…). Stores re-sync when Profit opens if the last sync is over an hour old, or with
+  **Sync now**. Store addresses must be public https sites; redirects are re-checked.
+- **eBay, Etsy, Shopify or any CSV:** imported in the browser. eBay's transaction report brings fees, refunds and shipping labels;
+  Etsy's order-items file and Shopify's orders export bring sales; *Other* lets you pick the columns. Re-importing the same orders
+  updates them.
+- Only order totals, dates, SKUs and product names are kept — never buyer names, emails or addresses.
+
+Profit = sales (items + shipping, without sales tax) − refunds − cost of goods − fees − business expenses on receipts − mileage.
+Cost of goods is units sold × each SKU's average landed cost across everything bought with that SKU, so purchases need the SKU they
+sell under: **Match purchases to products** suggests SKUs from the store catalog and sold items. The tab also shows profit per
+product, the Schedule C lines (1, 2, 4, 10 and 41), and inventory on hand (bought − sold per SKU at cost, next to the store's own
+stock count); one click saves the year-end inventory and fees into Write-offs. Home shows this month's profit once sales are connected.
+
+Tables: `sales_channels`, `sales_orders`, `sales_lines`, `sales_products` (migration `20261015132707_sales.sql`), in the *Reports*
+area for team access. Pure logic and tests: `web/src/lib/pnl.ts`, `salesImport.ts`, `skuMatch.ts`, `supabase/functions/_shared/woo.ts`.
 
 ## Receipt images for the IRS
 
