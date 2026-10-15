@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { BUCKET, supabase } from "../lib/supabase";
 import { CameraIcon, FileIcon } from "../components/Icons";
 import { accountId } from "../lib/account";
@@ -27,15 +27,51 @@ async function prepareImage(file: File): Promise<Blob> {
   );
 }
 
+/** Content fingerprint of the original file: the same photo picked twice maps to the same upload (no duplicate). */
+async function fingerprint(file: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Files shared to the installed app from another app (Android share sheet → public/sw.js). */
+async function takeSharedFiles(): Promise<File[]> {
+  if (!("caches" in window)) return [];
+  const cache = await caches.open("shared-receipts");
+  const files: File[] = [];
+  for (const req of await cache.keys()) {
+    const res = await cache.match(req);
+    if (res) {
+      const name = decodeURIComponent(res.headers.get("X-File-Name") ?? "shared");
+      files.push(new File([await res.blob()], name, { type: res.headers.get("Content-Type") ?? "" }));
+    }
+    await cache.delete(req);
+  }
+  return files;
+}
+
 export default function Add() {
   const [results, setResults] = useState<Result[]>([]);
+  const [params, setParams] = useSearchParams();
+  const [sharedNote, setSharedNote] = useState<string | null>(null);
   const photoRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const update = (i: number, patch: Partial<Result>) =>
     setResults((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
-  async function handle(files: FileList | null) {
+  // Arrived from the share sheet: upload what was shared, then tidy the URL.
+  useEffect(() => {
+    if (!params.has("shared")) return;
+    const note = params.get("note");
+    setParams({}, { replace: true });
+    takeSharedFiles().then((files) => {
+      if (files.length) handle(files);
+      else if (note) setSharedNote(note);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handle(files: FileList | File[] | null) {
     if (!files?.length) return;
     const owner = accountId();
     const list = Array.from(files);
@@ -47,12 +83,12 @@ export default function Add() {
       try {
         const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
         const body = isPdf ? file : await prepareImage(file);
-        const base = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 60) || "receipt";
-        const path = `${owner}/uploads/${Date.now()}-${base}.${isPdf ? "pdf" : body === file ? file.name.split(".").pop() : "jpg"}`;
+        // Named by content, so picking the same photo again is recognised as already captured.
+        const path = `${owner}/uploads/${await fingerprint(file)}.${isPdf ? "pdf" : body === file ? file.name.split(".").pop() : "jpg"}`;
         const contentType = isPdf ? "application/pdf" : body.type || file.type;
 
         const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, body, { contentType });
-        if (upErr) throw upErr;
+        if (upErr && !/exists|duplicate/i.test(upErr.message)) throw upErr;
 
         update(i, { text: "Reading receipt…" });
         const { data, error } = await supabase.functions.invoke("process-upload", { body: { path, account: owner } });
@@ -82,7 +118,7 @@ export default function Add() {
       <h1>Add a receipt</h1>
       <div className="add-buttons">
         <button className="big primary" onClick={() => photoRef.current?.click()}><CameraIcon size={20} />Take photo</button>
-        <button className="big" onClick={() => fileRef.current?.click()}><FileIcon size={20} />Upload photo or PDF</button>
+        <button className="big" onClick={() => fileRef.current?.click()}><FileIcon size={20} />Choose photos or PDFs</button>
       </div>
       <input ref={photoRef} type="file" accept="image/*" capture="environment" hidden
         onChange={(e) => { handle(e.target.files); e.target.value = ""; }} />
@@ -91,6 +127,16 @@ export default function Add() {
       <p className="muted small">
         Lay the receipt flat in good light and fill the frame. Long receipts: take it in one shot if you can read it, otherwise upload a PDF scan.
       </p>
+      <p className="muted small">
+        Already have receipts on your phone — photos, screenshots of e-receipts, PDFs from store apps or email? Choose as many as you
+        like at once; ones you've added before are skipped. Faster: <Link to="/settings#phone">send them from any app's Share button</Link>.
+      </p>
+      {sharedNote && (
+        <p className="banner warn">
+          Only text was shared ({sharedNote.slice(0, 120)}). Share the receipt's screenshot or PDF instead, or forward the email to your
+          forwarding address.
+        </p>
+      )}
 
       {results.length > 0 && (
         <ul className="results">

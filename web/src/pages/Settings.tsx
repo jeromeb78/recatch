@@ -8,6 +8,7 @@ import { AccountSection, BusinessProfile, ClaudeSection, ExtensionSection } from
 import { MembershipSection, TeamSection } from "../components/Team";
 import { TwoStepSection } from "../components/TwoStep";
 import { BusinessesSection } from "../components/Businesses";
+import { PhoneSection } from "../components/Phone";
 import { useConfirmIdentity } from "../components/ConfirmIdentity";
 import { accountId, useAccount } from "../lib/account";
 
@@ -196,6 +197,7 @@ function OwnerSettings({ userId, email }: { userId: string; email: string }) {
         )}
       </section>
 
+      <PhoneSection userId={userId} />
       <ExtensionSection userId={userId} />
       <ClaudeSection />
       <BusinessProfile userId={userId} />
