@@ -243,6 +243,20 @@ in row-level security (migration `team`), invite tokens are stored only as SHA-2
 remove team management, and nobody can change their own access. `process-upload` and `categorize-items` take an optional
 `account` (owner id) and check the caller's access before acting on it.
 
+## Phone
+
+- **Installable app:** a web app manifest plus `public/sw.js`. "Add to Home Screen" (iPhone) or "Install app" (Android)
+  gives a full-screen app with a Snap shortcut. The service worker caches nothing, so deploys are live immediately and
+  no receipt data stays on the device.
+- **Android Share menu:** once installed, Receipt Catcher appears when sharing photos, screenshots or PDFs from any app
+  (Photos, Gmail, store apps). Shared files go to `/share-target`; the service worker parks them, and the Snap page
+  uploads them.
+- **iPhone Shortcut:** Settings → Phone creates a connection code and shows the setup steps. The Shortcut posts the image to
+  the `upload-receipt` function (raw JPEG/PNG/WebP/PDF or multipart `file`, `Authorization: Bearer rc_…`), which replies
+  in plain text such as "Added to Receipt Catcher: Walmart $42.18".
+- **No duplicates:** uploads are named by a fingerprint of the file's contents, so picking or sharing the same photo again
+  returns "Already captured".
+
 ## Multiple businesses
 
 Settings → **Businesses**: add each business (name, type, optional EIN, what it sells or does). For automatic
