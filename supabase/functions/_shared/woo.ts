@@ -78,9 +78,11 @@ export function orderFees(meta: WooOrder["meta_data"]): number {
 }
 
 export function mapOrder(o: WooOrder): { order: SaleOrder; lines: SaleLine[] } | null {
-  const status = STATUS[o.status];
+  // Shipping and fulfilment plugins add their own statuses ("shipped", "delivered", "awaiting-pickup"…). Those orders were
+  // paid if the store recorded a payment date; anything else unknown is treated as not yet paid.
+  const status = STATUS[o.status] ?? (o.date_paid ? "paid" : "pending");
   const date = (o.date_paid ?? o.date_created ?? "").slice(0, 10);
-  if (!status || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   const lines: SaleLine[] = (o.line_items ?? []).map((l) => ({
     sku: l.sku?.trim() || null,
     name: (l.name ?? "Item").slice(0, 300),

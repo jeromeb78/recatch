@@ -214,10 +214,16 @@ export default function Receipts() {
         <Analytics period={spend.period} cur={spend.data.cur} prev={spend.data.prev} gaps={gaps}
           onStore={openStore}
           onNoSku={() => setFilters({ view: "items", items: "nosku" })}
-          onUnassigned={() => setFilters({ view: "", business: "none" })} />
+          onUnassigned={() => setFilters({ view: "", business: "none" })}
+          categories={categories} activeCategory={filters.category}
+          onCategory={(id) => {
+            // Match the overview: the category's receipts in the same period the card totals.
+            setFilters({ view: "", category: id, from: id ? spend.period.from ?? "" : "", to: id ? spend.period.to ?? "" : "" });
+            if (id) setTimeout(() => document.getElementById("receipt-results")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+          }} />
       ))}
 
-      <div className="tabs" role="tablist" aria-label="Browse">
+      <div className="tabs" role="tablist" aria-label="Browse" id="receipt-results">
         {([["receipts", "Receipts"], ["stores", "Stores"], ["items", "Items"]] as [View, string][]).map(([k, label]) => (
           <button key={k} role="tab" aria-selected={view === k} className={view === k ? "on" : ""}
             onClick={() => setFilters({ view: k === "receipts" ? "" : k, items: "" })}>{label}</button>
@@ -236,6 +242,12 @@ export default function Receipts() {
           {filters.store && (
             <button className="chip-btn on" onClick={() => setFilters({ store: "" })} aria-label={`Remove store filter ${filters.store}`}>
               Store: {filters.store} ✕
+            </button>
+          )}
+          {filters.category && (
+            <button className="chip-btn on" onClick={() => setFilters({ category: "", from: "", to: "" })}
+              aria-label={`Remove category filter ${filters.category === "none" ? "No category" : catById.get(filters.category)?.name ?? ""}`}>
+              {filters.category === "none" ? "No category" : catById.get(filters.category)?.name ?? "Category"}{filters.from ? ` · since ${filters.from}` : ""} ✕
             </button>
           )}
         </span>

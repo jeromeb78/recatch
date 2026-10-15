@@ -18,6 +18,7 @@ export interface AReceipt {
   document_type: string;
   status: string;
   business_id?: string | null;
+  category_id?: string | null;
 }
 
 export interface ALine {

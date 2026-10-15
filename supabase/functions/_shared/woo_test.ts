@@ -23,7 +23,10 @@ Deno.test("maps a paid order with refunds, fees and no customer data", () => {
 
 Deno.test("statuses", () => {
   const s = (status: string) => mapOrder({ id: 1, status, date_created: "2026-01-02T00:00:00" })?.order.status ?? null;
-  assertEquals([s("processing"), s("on-hold"), s("refunded"), s("failed"), s("pending"), s("weird")], ["paid", "paid", "refunded", "cancelled", "pending", null]);
+  assertEquals([s("processing"), s("on-hold"), s("refunded"), s("failed"), s("pending"), s("weird")], ["paid", "paid", "refunded", "cancelled", "pending", "pending"]);
+  // Custom statuses from shipping plugins: paid when the store recorded a payment.
+  assertEquals(mapOrder({ id: 2, status: "shipped", date_paid: "2026-01-03T10:00:00", date_created: "2026-01-02T00:00:00" })?.order.status, "paid");
+  assertEquals(mapOrder({ id: 3, status: "wc-delivered", date_paid: "2026-01-03T10:00:00" })?.order.order_date, "2026-01-03");
   assertEquals(mapOrder({ id: 1, status: "completed" }), null); // no date
 });
 
