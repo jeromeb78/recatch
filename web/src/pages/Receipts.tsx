@@ -7,15 +7,22 @@ import { DownloadIcon, SearchIcon } from "../components/Icons";
 import ReceiptRow from "../components/ReceiptRow";
 import { SOURCE_LABEL } from "../lib/merchant";
 import { download, toCsv } from "../lib/csv";
-import type { Receipt } from "../lib/types";
+import type { Category, Receipt } from "../lib/types";
 import { accountId } from "../lib/account";
 import { useBusinesses } from "../lib/businesses";
+import { Analytics } from "../components/Analytics";
+import { ItemsView, StoresView } from "../components/StoresItems";
+import { useSpendData } from "../lib/useSpendData";
+import { PERIOD_LABEL, PERIODS, type PeriodKey } from "../lib/analytics";
+import type { LineItem } from "../lib/types";
 
 const PAGE = 1000;
 const COLUMNS =
-  "id, source, status, review_reasons, document_type, merchant, order_number, purchase_date, currency, subtotal, tax, shipping, discount, total, payment_method, category_id, notes, confidence, email_subject, email_from, files, created_at";
+  "id, source, status, review_reasons, document_type, merchant, order_number, purchase_date, currency, subtotal, tax, shipping, discount, total, payment_method, category_id, notes, confidence, email_subject, email_from, files, created_at, business_id, line_items(count)";
 
-type Filters = { q: string; status: string; category: string; source: string; from: string; to: string; business: string };
+type View = "receipts" | "stores" | "items";
+
+type Filters = { q: string; status: string; category: string; source: string; from: string; to: string; business: string; store: string; view: string; period: string; items: string };
 
 function useFilters(): [Filters, (patch: Partial<Filters>) => void] {
   const [params, setParams] = useSearchParams();
@@ -27,6 +34,10 @@ function useFilters(): [Filters, (patch: Partial<Filters>) => void] {
     from: params.get("from") ?? "",
     to: params.get("to") ?? "",
     business: params.get("business") ?? "",
+    store: params.get("store") ?? "",
+    view: params.get("view") ?? "",
+    period: params.get("period") ?? "",
+    items: params.get("items") ?? "",
   };
   const update = (patch: Partial<Filters>) => {
     const next = { ...filters, ...patch };
@@ -51,6 +62,7 @@ async function fetchReceipts(f: Filters): Promise<Receipt[]> {
     if (f.source) q = q.eq("source", f.source);
     if (f.category === "none") q = q.is("category_id", null);
     else if (f.category) q = q.eq("category_id", f.category);
+    if (f.store) q = q.ilike("merchant", `${f.store.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
     if (f.business === "none") q = q.is("business_id", null);
     else if (f.business) q = q.eq("business_id", f.business);
     if (f.from) q = q.gte("purchase_date", f.from);
@@ -79,7 +91,29 @@ export default function Receipts() {
   const { businesses } = useBusinesses();
   const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
-  const key = JSON.stringify(filters);
+  // Only the list's own filters refetch it (not the view or analytics period).
+  const key = JSON.stringify({ ...filters, view: "", period: "", items: "" });
+  const view: View = filters.view === "stores" || filters.view === "items" ? filters.view : "receipts";
+  const periodKey: PeriodKey = (PERIODS as readonly string[]).includes(filters.period) ? (filters.period as PeriodKey) : "12m";
+  const spend = useSpendData(periodKey, filters.business);
+  const [showOverview, setShowOverview] = useState(() => {
+    try { return localStorage.getItem("recatch.overview") !== "hidden"; } catch { return true; }
+  });
+  const toggleOverview = () => {
+    setShowOverview((v) => {
+      try { localStorage.setItem("recatch.overview", v ? "hidden" : "shown"); } catch { /* private mode */ }
+      return !v;
+    });
+  };
+  const gaps = useMemo(() => {
+    const d = spend.data?.cur;
+    return {
+      review: d ? d.receipts.filter((r) => r.status === "needs_review").length : 0,
+      unassigned: businesses?.length && d ? d.receipts.filter((r) => !r.business_id).length : null,
+      noSku: d ? new Set(d.lines.filter((l) => l.tax_line === "cogs" && !l.woo_sku).map((l) => l.description.toLowerCase())).size : 0,
+    };
+  }, [spend.data, businesses]);
+  const openStore = (name: string) => setFilters({ view: "", store: name, from: spend.period.from ?? "", to: spend.period.to ?? "" });
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -162,7 +196,49 @@ export default function Receipts() {
   return (
     <div className="stack">
       <div className="page-head row-between">
-        <h1>All receipts</h1>
+        <h1>Receipts</h1>
+        <label className="inline-select">
+          <span className="muted small">Overview</span>
+          <select value={periodKey} onChange={(e) => setFilters({ period: e.target.value })} aria-label="Overview period">
+            {PERIODS.map((k) => <option key={k} value={k}>{PERIOD_LABEL[k]}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div className="overview-head">
+        <button className="link small" onClick={toggleOverview} aria-expanded={showOverview}>
+          {showOverview ? "Hide overview" : "Show overview"}
+        </button>
+      </div>
+      {showOverview && (spend.error ? <p className="error">{spend.error}</p> : !spend.data ? <p className="muted">Loading overview…</p> : (
+        <Analytics period={spend.period} cur={spend.data.cur} prev={spend.data.prev} gaps={gaps}
+          onStore={openStore}
+          onNoSku={() => setFilters({ view: "items", items: "nosku" })}
+          onUnassigned={() => setFilters({ view: "", business: "none" })} />
+      ))}
+
+      <div className="tabs" role="tablist" aria-label="Browse">
+        {([["receipts", "Receipts"], ["stores", "Stores"], ["items", "Items"]] as [View, string][]).map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={view === k} className={view === k ? "on" : ""}
+            onClick={() => setFilters({ view: k === "receipts" ? "" : k, items: "" })}>{label}</button>
+        ))}
+      </div>
+
+      {view === "stores" && (spend.data
+        ? <StoresView receipts={spend.data.cur.receipts} lines={spend.data.cur.lines} onOpen={openStore} />
+        : <p className="muted">Loading…</p>)}
+      {view === "items" && (spend.data
+        ? <ItemsView key={filters.items} lines={spend.data.cur.lines} initialFilter={filters.items === "nosku" ? "nosku" : ""} />
+        : <p className="muted">Loading…</p>)}
+      {view === "receipts" && <>
+      <div className="row-between list-head">
+        <span>
+          {filters.store && (
+            <button className="chip-btn on" onClick={() => setFilters({ store: "" })} aria-label={`Remove store filter ${filters.store}`}>
+              Store: {filters.store} ✕
+            </button>
+          )}
+        </span>
         <div className="head-actions">
           <button className="btn sm" onClick={exportReceipts} disabled={!receipts?.length}>
             <DownloadIcon size={16} />Receipts CSV
@@ -244,9 +320,50 @@ export default function Receipts() {
       ) : (
         <div className="card list-card">
           {receipts.map((r) => (
-            <ReceiptRow key={r.id} r={r} category={r.category_id ? catById.get(r.category_id) : undefined} />
+            <ReceiptListRow key={r.id} r={r} category={r.category_id ? catById.get(r.category_id) : undefined}
+              business={r.business_id ? businesses?.find((b) => b.id === r.business_id)?.name : undefined} />
           ))}
         </div>
+      )}
+      </>}
+    </div>
+  );
+}
+
+/** A receipt in the list, with its item count and business, that opens in place to show its items. */
+function ReceiptListRow({ r, category, business }: { r: Receipt & { line_items?: { count: number }[] }; category?: Category; business?: string }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<LineItem[] | null>(null);
+  const count = r.line_items?.[0]?.count ?? 0;
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !items) {
+      const { data } = await supabase.from("line_items").select("*").eq("receipt_id", r.id).order("position");
+      setItems((data ?? []) as LineItem[]);
+    }
+  }
+  return (
+    <div className={`receipt-item${open ? " open" : ""}`}>
+      <div className="receipt-line">
+        <ReceiptRow r={r} category={category} extra={[count ? `${count} item${count === 1 ? "" : "s"}` : null, business].filter(Boolean).join(" · ")} />
+        {count > 0 && (
+          <button className="expand" onClick={toggle} aria-expanded={open} aria-label={open ? "Hide items" : `Show ${count} items`}>
+            <span aria-hidden="true">{open ? "▴" : "▾"}</span>
+          </button>
+        )}
+      </div>
+      {open && (
+        <ul className="receipt-items">
+          {items === null ? <li className="muted small">Loading…</li> : items.map((li) => (
+            <li key={li.id}>
+              <span className="grow">{li.description}</span>
+              {li.quantity && Number(li.quantity) !== 1 ? <span className="muted small">×{Number(li.quantity)}</span> : null}
+              {li.woo_sku && <span className="pill">{li.woo_sku}</span>}
+              <span className="mono small">{money(li.total, r.currency)}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

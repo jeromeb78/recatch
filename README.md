@@ -243,6 +243,28 @@ in row-level security (migration `team`), invite tokens are stored only as SHA-2
 remove team management, and nobody can change their own access. `process-upload` and `categorize-items` take an optional
 `account` (owner id) and check the caller's access before acting on it.
 
+## Receipts overview, stores and items
+
+The Receipts page opens with an **overview** for a chosen period (this month, last 3 months, this year, last year,
+last 12 months or all time), and respects the business filter:
+- **Headline numbers:** spent, inventory, business expenses, personal and average order, each with the change vs the
+  previous period of the same length.
+- **To tidy up:** quick links for receipts that need review, receipts not assigned to a business, inventory items
+  without a SKU, and spend not yet sorted into business or personal.
+- **Spend by month:** stacked by inventory, business, personal and unsorted; hover or tap a month for its numbers.
+- **Top stores:** tap one to see its receipts.
+
+Below the overview are three views:
+- **Receipts:** the list. Each row shows its item count and business and opens in place to show its items.
+- **Stores:** one card per store with spend, orders, average basket, last visit, business share and top items.
+  Spellings like "Walmart" and "WALMART.COM" are merged.
+- **Items:** every product bought, merged across receipts by Woo SKU, then store SKU, then name. Shows times bought,
+  units, spend, average and lowest landed unit cost (and where), last bought, and the purchase history, with search,
+  filters and sorting.
+
+Analytics are computed in the browser from `receipts` and the `inventory_lines` view (`web/src/lib/analytics.ts`,
+unit-tested).
+
 ## Phone
 
 - **Installable app:** a web app manifest plus `public/sw.js`. "Add to Home Screen" (iPhone) or "Install app" (Android)
