@@ -187,7 +187,13 @@ privacy policy at `/privacy`), then set `VITE_EXTENSION_STORE_URL` and `VITE_CON
 The `mcp` function is a remote MCP server with its own OAuth 2.1 (dynamic client registration, PKCE, rotating refresh
 tokens, all stored hashed). Users add it in Claude under **Settings → Connectors → Add custom connector** with
 `https://<your-app-domain>/mcp`, then approve on the app's `/oauth/authorize` screen. Tools: `add_receipt`,
-`check_imported`, `search_receipts`, `get_receipt`, `spending_summary`, `inventory_costs`, `update_line_item`.
+`check_imported`, `search_receipts`, `get_receipt`, `spending_summary`, `inventory_costs`, `update_line_item`, and for
+sellers `profit_summary`, `product_profit`, `stripe_reconciliation`, `shipping_costs`, `inventory_on_hand`, `get_order`,
+`set_sku_cost`.
+
+- The profit tools compute exactly what Reports → Profit shows: `supabase/functions/_shared/profit/` holds generated copies
+  of `web/src/lib/{pnl,costs,reconcile,shipping,…}.ts`. After editing those, run `node scripts/sync-profit-lib.mjs`
+  (a test fails while the copies are stale) and redeploy `mcp`.
 
 - OAuth discovery must live at the domain root, so `web/vercel.json` (and `public/_redirects`) proxy `/mcp`,
   `/.well-known/oauth-*` and `/oauth/register|token` to the function. **They hardcode the Supabase project ref**; change it if you fork.
