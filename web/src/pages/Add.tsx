@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { BUCKET, supabase } from "../lib/supabase";
 import { CameraIcon, FileIcon } from "../components/Icons";
+import { ReceiptImport } from "../components/ReceiptImport";
 import { accountId } from "../lib/account";
 
 type Result = { name: string; state: "working" | "done" | "error"; text: string; receiptId?: string };
@@ -53,6 +54,8 @@ export default function Add() {
   const [results, setResults] = useState<Result[]>([]);
   const [params, setParams] = useSearchParams();
   const [sharedNote, setSharedNote] = useState<string | null>(null);
+  // A spreadsheet of purchases opens the importer (from the button, the file picker, or the share sheet).
+  const [importing, setImporting] = useState<null | { name: string; text: string } | "open">(null);
   const photoRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -74,7 +77,11 @@ export default function Add() {
   async function handle(files: FileList | File[] | null) {
     if (!files?.length) return;
     const owner = accountId();
-    const list = Array.from(files);
+    const all = Array.from(files);
+    const csv = all.find((f) => /\.csv$/i.test(f.name) || /csv|comma-separated/.test(f.type));
+    if (csv) setImporting({ name: csv.name, text: await csv.text() });
+    const list = all.filter((f) => f !== csv && !/\.csv$/i.test(f.name));
+    if (!list.length) return;
     const offset = results.length;
     setResults((rs) => [...rs, ...list.map((f) => ({ name: f.name, state: "working" as const, text: "Uploading…" }))]);
 
@@ -120,9 +127,15 @@ export default function Add() {
         <button className="big primary" onClick={() => photoRef.current?.click()}><CameraIcon size={20} />Take photo</button>
         <button className="big" onClick={() => fileRef.current?.click()}><FileIcon size={20} />Choose photos or PDFs</button>
       </div>
+      {importing ? (
+        <ReceiptImport key={typeof importing === "object" ? importing.name : "new"} initial={typeof importing === "object" ? importing : undefined}
+          onClose={() => setImporting(null)} />
+      ) : (
+        <button className="btn import-link" onClick={() => setImporting("open")}>Import from a spreadsheet (CSV)</button>
+      )}
       <input ref={photoRef} type="file" accept="image/*" capture="environment" hidden
         onChange={(e) => { handle(e.target.files); e.target.value = ""; }} />
-      <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple hidden
+      <input ref={fileRef} type="file" accept="image/*,application/pdf,.csv,text/csv" multiple hidden
         onChange={(e) => { handle(e.target.files); e.target.value = ""; }} />
       <p className="muted small">
         Lay the receipt flat in good light and fill the frame. Long receipts: take it in one shot if you can read it, otherwise upload a PDF scan.
@@ -130,6 +143,8 @@ export default function Add() {
       <p className="muted small">
         Already have receipts on your phone — photos, screenshots of e-receipts, PDFs from store apps or email? Choose as many as you
         like at once; ones you've added before are skipped. Faster: <Link to="/settings#phone">send them from any app's Share button</Link>.
+        Have an Amazon order history or a bank/card statement as a CSV? Use <b>Import from a spreadsheet</b> — it works from your phone's Files,
+        iCloud Drive or Google Drive.
       </p>
       {sharedNote && (
         <p className="banner warn">

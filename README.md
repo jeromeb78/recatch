@@ -268,6 +268,16 @@ Below the overview are three views:
 Analytics are computed in the browser from `receipts` and the `inventory_lines` view (`web/src/lib/analytics.ts`,
 unit-tested).
 
+## Importing receipts from a spreadsheet
+
+Add → **Import from a spreadsheet (CSV)** (also used automatically when a CSV is picked or shared to the installed app on
+Android). Presets: **Amazon order history** (Request your data → Retail.OrderHistory CSV: one receipt per order with items,
+ASINs as store SKUs, cancelled orders skipped), **bank / card statements** (one receipt per charge; payments, transfers and
+deposits skipped; refunds optional; the charge sign is detected; descriptions cleaned to store names), and **any CSV** with
+picked columns (one row per purchase, or one row per item grouped by order number). Parsing is in the browser
+(`web/src/lib/receiptImport.ts`). Purchases already present (same source row, same order number, or same store + amount within
+3 days) are skipped, so re-importing or overlapping with Gmail is safe. Imported items then go through categorize-items.
+
 ## Phone
 
 - **Installable app:** a web app manifest plus `public/sw.js`. "Add to Home Screen" (iPhone) or "Install app" (Android)

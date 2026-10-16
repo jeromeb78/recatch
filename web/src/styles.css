@@ -748,3 +748,6 @@ button.store-bar:hover { background: var(--hairline); }
 .category-card .cat-head b { white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
 .category-card .cat-kind { align-self: flex-start; margin-top: -4px; }
 @media (max-width: 520px) { .category-grid { grid-template-columns: minmax(0, 1fr); } .category-card .cat-spend b { font-size: 20px; } }
+.import-link { width: 100%; margin-top: 10px; }
+.receipt-import { margin-top: 12px; }
+.receipt-import h2 { margin: 0; }
