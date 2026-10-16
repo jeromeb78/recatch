@@ -17,16 +17,50 @@ const db: Record<string, Row[]> = {
     { id: "r2", user_id: OTHER, source_message_id: "ext:www.walmart.com:orders/2000999" },
   ],
   line_items: [{ id: "li-other", user_id: OTHER, description: "x" }],
+  // A WooCommerce order paid through Stripe and shipped with Easyship, plus another user's data that must stay out.
+  sales_channels: [{ id: "ch-woo", user_id: USER, kind: "woocommerce", store_url: "https://shop.example.com" }],
+  payment_accounts: [{ id: "pa-1", user_id: USER, business_id: null }],
+  shipping_accounts: [{ id: "sa-1", user_id: USER, business_id: null }],
+  sales_orders: [
+    { id: "so-1", user_id: USER, channel_id: "ch-woo", external_id: "501", order_number: "1001", order_date: "2026-03-02", status: "paid", items_total: 40,
+      shipping_charged: 8, tax_collected: 3, refunded: 0, fees: 0, total: 51, business_id: null, payment_method: "stripe", payment_ref: "ch_1" },
+    { id: "so-x", user_id: OTHER, channel_id: "ch-o", external_id: "9", order_number: "1001", order_date: "2026-03-02", status: "paid", items_total: 999,
+      shipping_charged: 0, tax_collected: 0, refunded: 0, fees: 0, total: 999, business_id: null, payment_method: "stripe", payment_ref: "ch_9" },
+  ],
+  sales_lines: [
+    { id: 1, order_id: "so-1", user_id: USER, sku: "ABC1", name: "Barbie Doll", quantity: 2, total: 40, sales_orders: { business_id: null, order_date: "2026-03-02" } },
+    { id: 2, order_id: "so-x", user_id: OTHER, sku: "ABC1", name: "Barbie Doll", quantity: 50, total: 999, sales_orders: { business_id: null, order_date: "2026-03-02" } },
+  ],
+  payments: [{ id: "p-1", user_id: USER, account_id: "pa-1", external_id: "ch_1", payment_intent: "pi_1", payment_date: "2026-03-02", status: "succeeded",
+    amount: 51, refunded: 0, fee: 1.78, disputed: false, description: null, order_ref: "501", site_url: "https://shop.example.com" }],
+  shipments: [{ id: "sh-1", user_id: USER, account_id: "sa-1", external_id: "ESUS1", order_ref: "1001", ship_date: "2026-03-03", state: "active",
+    label_cost: 9.5, courier: "USPS", tracking: "9400" }],
+  sales_products: [{ user_id: USER, sku: "ABC1", name: "Barbie Doll", stock: 3, cost: 12 }],
+  sku_costs: [{ user_id: USER, sku: "ABC1", unit_cost: 5, pool_id: null }],
 };
+
+const field = (row: Row, col: string): unknown => col.split(".").reduce<unknown>((v, k) => (v as Row | undefined)?.[k], row);
+function test(row: Row, col: string, op: string, val: string): boolean {
+  const v = field(row, col);
+  if (op === "eq") return String(v) === val;
+  if (op === "is") return val === "null" ? v == null : true;
+  if (op === "lte") return v != null && String(v) <= val;
+  if (op === "gte") return v != null && String(v) >= val;
+  if (op === "in") return val.replace(/^\(|\)$/g, "").split(",").map((x) => x.replace(/^"|"$/g, "")).includes(String(v));
+  return true;
+}
 
 function matches(row: Row, params: URLSearchParams): boolean {
   for (const [col, cond] of params) {
     if (["select", "order", "limit", "offset", "columns", "on_conflict"].includes(col)) continue;
+    if (col === "or") {
+      const any = cond.replace(/^\(|\)$/g, "").split(",").some((c) => { const [k, op, ...v] = c.split("."); return test(row, k, op, v.join(".")); });
+      if (!any) return false;
+      continue;
+    }
     const [op, ...rest] = cond.split(".");
-    const val = rest.join(".");
-    if (op === "eq" && String(row[col]) !== val) return false;
-    if (op === "is" && val === "null" && row[col] != null) return false;
-    if (op === "in" && !val.replace(/^\(|\)$/g, "").split(",").map((v) => v.replace(/^"|"$/g, "")).includes(String(row[col]))) return false;
+    if (op === "not") { if (test(row, col, rest[0], rest.slice(1).join("."))) return false; continue; }
+    if (!test(row, col, op, rest.join("."))) return false;
   }
   return true;
 }
@@ -161,7 +195,10 @@ Deno.test("MCP handshake, tools and user scoping", async () => {
 
   const list = await (await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json();
   const names = list.result.tools.map((t: { name: string }) => t.name);
-  assertEquals(names, ["add_receipt", "check_imported", "search_receipts", "get_receipt", "spending_summary", "inventory_costs", "update_line_item"]);
+  assertEquals(names, [
+    "add_receipt", "check_imported", "search_receipts", "get_receipt", "spending_summary", "inventory_costs", "update_line_item",
+    "profit_summary", "product_profit", "stripe_reconciliation", "shipping_costs", "inventory_on_hand", "get_order", "set_sku_cost",
+  ]);
   assert(list.result.tools.every((t: { handler?: unknown }) => t.handler === undefined));
 
   const check = await (await rpc({
@@ -181,6 +218,46 @@ Deno.test("MCP handshake, tools and user scoping", async () => {
 
   const unknown = await (await rpc({ jsonrpc: "2.0", id: 6, method: "does/not/exist" })).json();
   assertEquals(unknown.error.code, -32601);
+});
+
+Deno.test("profit tools: Stripe-checked sales, SKU cost, Easyship labels, scoped to the user", async () => {
+  const tool = async (name: string, args: Record<string, unknown>) =>
+    (await (await rpc({ jsonrpc: "2.0", id: 20, method: "tools/call", params: { name, arguments: args } })).json()).result;
+
+  const sum = (await tool("profit_summary", { year: 2026 })).structuredContent;
+  assertEquals(sum.orders, 1);
+  assertEquals(sum.units_sold, 2);
+  assertEquals(sum.cost_of_goods, 10); // 2 × your $5 SKU cost (beats the store's $12)
+  assertEquals(sum.fees, 1.78); // Stripe's fee
+  assert(sum.expenses.some((e: { line: string; amount: number }) => /Easyship/.test(e.line) && e.amount === 9.5));
+  assertEquals(sum.units_sold_by_cost_source.your_cost, 2);
+
+  const prod = (await tool("product_profit", { year: 2026, sku: "abc1" })).structuredContent;
+  assertEquals(prod.products.length, 1);
+  assertEquals(prod.products[0].unit_cost, 5);
+  assertEquals(prod.products[0].units_sold, 2);
+
+  const stripe = (await tool("stripe_reconciliation", { year: 2026 })).structuredContent;
+  assertEquals(stripe.matched_orders, 1);
+  assertEquals(stripe.stripe_payments_without_store_order.count, 0);
+
+  const ship = (await tool("shipping_costs", { year: 2026 })).structuredContent;
+  assertEquals(ship.label_spend_total, 9.5);
+  assertEquals(ship.customers_paid_for_shipping, 8);
+  assertEquals(ship.shipping_profit, -1.5);
+
+  const order = (await tool("get_order", { order: "#1001" })).structuredContent;
+  assertEquals(order.items[0].unit_cost, 5);
+  assertEquals(order.money.fees, 1.78);
+  assertEquals(order.money.shipping_labels, 9.5);
+  assertEquals(order.money.profit, 51 - 3 - 1.78 - 10 - 9.5);
+
+  const set = await tool("set_sku_cost", { sku: " abc2 ", unit_cost: 7.25 });
+  assertEquals(set.structuredContent.sku, "ABC2");
+  assertEquals(db.sku_costs.at(-1), { id: db.sku_costs.at(-1)!.id, user_id: USER, sku: "ABC2", unit_cost: 7.25, updated_at: db.sku_costs.at(-1)!.updated_at });
+  assertEquals((await tool("set_sku_cost", { sku: "X", unit_cost: -1 })).isError, true);
+  assertEquals((await tool("profit_summary", { business: "Nope" })).isError, true);
+  assertEquals((await tool("get_order", { order: "424242" })).isError, true);
 });
 
 Deno.test("refresh rotation: old refresh token stops working", async () => {
