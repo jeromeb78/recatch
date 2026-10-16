@@ -1,8 +1,8 @@
 // Tools exposed to Claude. Every query is scoped to the authenticated user's id.
 import { ingest, pageMessageId } from "../_shared/ingest.ts";
 import { TAX_LINE_CODES, TAX_LINES, USE_TYPES } from "../_shared/tax.ts";
-import { adminClient, sha256Hex } from "../_shared/utils.ts";
-import { appUrl } from "./oauth.ts";
+import { adminClient, allows, sha256Hex } from "../_shared/utils.ts";
+import { appUrl, type Grant } from "./oauth.ts";
 import { getOrder, inventoryOnHand, ProfitError, productProfit, profitSummary, setSkuCost, shippingCosts, stripeCheck } from "./profit.ts";
 
 type Args = Record<string, unknown>;
@@ -14,6 +14,9 @@ interface Tool {
   description: string;
   inputSchema: Record<string, unknown>;
   annotations: Record<string, boolean | string>;
+  /** What a team member needs in the account Claude is connected to (owners can use every tool). */
+  area: "receipts" | "reports";
+  level: "view" | "edit";
   handler: Handler;
 }
 
@@ -247,6 +250,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Add a receipt", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    area: "receipts", level: "edit",
     handler: addReceipt,
   },
   {
@@ -260,6 +264,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Check imported orders", ...READ },
+    area: "receipts", level: "view",
     handler: checkImported,
   },
   {
@@ -279,6 +284,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Search receipts", ...READ },
+    area: "receipts", level: "view",
     handler: searchReceipts,
   },
   {
@@ -287,6 +293,7 @@ export const TOOLS: Tool[] = [
     description: "Full details of one receipt, including line items with their ids, Woo SKUs, pack sizes and tax lines.",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
     annotations: { title: "Get a receipt", ...READ },
+    area: "receipts", level: "view",
     handler: getReceipt,
   },
   {
@@ -304,6 +311,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Spending summary", ...READ },
+    area: "receipts", level: "view",
     handler: spendingSummary,
   },
   {
@@ -322,6 +330,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Inventory costs", ...READ },
+    area: "reports", level: "view",
     handler: inventoryCosts,
   },
   {
@@ -341,6 +350,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Update a line item", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    area: "receipts", level: "edit",
     handler: updateLineItem,
   },
   {
@@ -352,6 +362,7 @@ export const TOOLS: Tool[] = [
       "Defaults to this year to date.",
     inputSchema: { type: "object", properties: { ...PERIOD }, additionalProperties: false },
     annotations: { title: "Profit summary", ...READ },
+    area: "reports", level: "view",
     handler: profitSummary,
   },
   {
@@ -372,6 +383,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Profit by product", ...READ },
+    area: "reports", level: "view",
     handler: productProfit,
   },
   {
@@ -382,6 +394,7 @@ export const TOOLS: Tool[] = [
       "store orders paid by card with no Stripe charge, amount and refund/status differences, disputes.",
     inputSchema: { type: "object", properties: { ...PERIOD, limit: { type: "integer", minimum: 1, maximum: 200 } }, additionalProperties: false },
     annotations: { title: "Stripe check", ...READ },
+    area: "reports", level: "view",
     handler: stripeCheck,
   },
   {
@@ -392,6 +405,7 @@ export const TOOLS: Tool[] = [
       "refunded orders that already shipped, labels with no store order and paid orders with no label.",
     inputSchema: { type: "object", properties: { ...PERIOD, limit: { type: "integer", minimum: 1, maximum: 200 } }, additionalProperties: false },
     annotations: { title: "Shipping costs", ...READ },
+    area: "reports", level: "view",
     handler: shippingCosts,
   },
   {
@@ -408,6 +422,7 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Inventory on hand", ...READ },
+    area: "reports", level: "view",
     handler: inventoryOnHand,
   },
   {
@@ -416,6 +431,7 @@ export const TOOLS: Tool[] = [
     description: "One store order by its order number: items with unit cost and cost source, Stripe payments, Easyship shipments and the order's profit.",
     inputSchema: { type: "object", properties: { order: { type: "string", description: "Store order number, e.g. 12345 or #12345." } }, required: ["order"], additionalProperties: false },
     annotations: { title: "Get a store order", ...READ },
+    area: "reports", level: "view",
     handler: getOrder,
   },
   {
@@ -431,15 +447,26 @@ export const TOOLS: Tool[] = [
       additionalProperties: false,
     },
     annotations: { title: "Set a SKU's cost", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    area: "reports", level: "edit",
     handler: setSkuCost,
   },
 ];
 
-export async function callTool(name: string, userId: string, args: Args) {
+/** The tools this connection may use: all of them for the owner, else what the team member's access allows. */
+export function toolsFor(grant: Grant): Tool[] {
+  return TOOLS.filter((t) => grant.perms === null || allows(grant.perms, t.area, t.level));
+}
+
+export async function callTool(name: string, grant: Grant, args: Args) {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+  if (!toolsFor(grant).includes(tool)) {
+    const what = tool.area === "receipts" ? "receipts" : "reports";
+    return { content: [{ type: "text", text: `Your access to this account doesn't include ${tool.level === "edit" ? "changing" : "seeing"} ${what}. Ask the account owner to change it in Settings → Team.` }], isError: true };
+  }
   try {
-    const data = await tool.handler(userId, args ?? {});
+    // Every query is scoped to the account Claude is connected to.
+    const data = await tool.handler(grant.owner, args ?? {});
     return {
       content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
       structuredContent: data as Record<string, unknown>,

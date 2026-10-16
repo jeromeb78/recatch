@@ -9,9 +9,12 @@ Deno.env.set("APP_URL", "https://app.example.com");
 
 const USER = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
+const MEMBER = "33333333-3333-3333-3333-333333333333";
 type Row = Record<string, unknown>;
 const db: Record<string, Row[]> = {
   oauth_clients: [], oauth_codes: [], oauth_tokens: [],
+  // MEMBER was invited to USER's account to see reports only.
+  account_members: [{ owner_id: USER, member_id: MEMBER, permissions: { receipts: "none", reports: "view", settings: "none", team: "none" } }],
   receipts: [
     { id: "r1", user_id: USER, source_message_id: "ext:www.walmart.com:orders/2000123" },
     { id: "r2", user_id: OTHER, source_message_id: "ext:www.walmart.com:orders/2000999" },
@@ -72,8 +75,9 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(req.url);
   if (!url.href.startsWith(SUPABASE)) return realFetch(input, init);
   if (url.pathname === "/auth/v1/user") {
-    return req.headers.get("authorization") === "Bearer user-jwt"
-      ? Response.json({ id: USER, email: "me@example.com", aud: "authenticated" })
+    const who = { "Bearer user-jwt": USER, "Bearer member-jwt": MEMBER }[req.headers.get("authorization") ?? ""];
+    return who
+      ? Response.json({ id: who, email: `${who.slice(0, 4)}@example.com`, aud: "authenticated" })
       : Response.json({ message: "invalid" }, { status: 401 });
   }
   const table = url.pathname.replace("/rest/v1/", "");
@@ -90,6 +94,10 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const items = (Array.isArray(body) ? body : [body]).map((b) => ({ id: crypto.randomUUID(), ...b }));
     rows.push(...items);
     return (req.headers.get("prefer") ?? "").includes("return=representation") ? reply(items) : new Response(null, { status: 201 });
+  }
+  if (req.method === "DELETE") {
+    db[table] = rows.filter((r) => !matches(r, url.searchParams));
+    return new Response(null, { status: 204 });
   }
   if (req.method === "PATCH") {
     const patch = await req.json();
@@ -258,6 +266,34 @@ Deno.test("profit tools: Stripe-checked sales, SKU cost, Easyship labels, scoped
   assertEquals((await tool("set_sku_cost", { sku: "X", unit_cost: -1 })).isError, true);
   assertEquals((await tool("profit_summary", { business: "Nope" })).isError, true);
   assertEquals((await tool("get_order", { order: "424242" })).isError, true);
+});
+
+Deno.test("team member connects Claude to the owner's account with only their access", async () => {
+  const approve = (account: string) => call("/oauth/approve", {
+    method: "POST", headers: { authorization: "Bearer member-jwt", "content-type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, redirect_uri: REDIRECT, state: "m", code_challenge: challenge, code_challenge_method: "S256", account }),
+  });
+  assertEquals((await approve(OTHER)).status, 403); // not a member there
+  const code = new URL((await (await approve(USER)).json()).redirect_to).searchParams.get("code")!;
+  const tok = await (await call("/oauth/token", {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "authorization_code", code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT }).toString(),
+  })).json();
+  const member = tok.access_token as string;
+  assertEquals(db.oauth_tokens.at(-1)!.account_id, USER);
+
+  const names = (await (await rpc({ jsonrpc: "2.0", id: 30, method: "tools/list" }, member)).json()).result.tools.map((t: { name: string }) => t.name);
+  assertEquals(names, ["inventory_costs", "profit_summary", "product_profit", "stripe_reconciliation", "shipping_costs", "inventory_on_hand", "get_order"]);
+  const call2 = async (name: string, args: Record<string, unknown>) =>
+    (await (await rpc({ jsonrpc: "2.0", id: 31, method: "tools/call", params: { name, arguments: args } }, member)).json()).result;
+  // Sees the owner's sales, not their own (empty) account.
+  assertEquals((await call2("profit_summary", { year: 2026 })).structuredContent.orders, 1);
+  assertEquals((await call2("search_receipts", {})).isError, true);
+  assertEquals((await call2("set_sku_cost", { sku: "ABC1", unit_cost: 1 })).isError, true);
+
+  // Removing the member cuts Claude off on the next request.
+  db.account_members = [];
+  assertEquals((await rpc({ jsonrpc: "2.0", id: 32, method: "tools/list" }, member)).status, 401);
 });
 
 Deno.test("refresh rotation: old refresh token stops working", async () => {

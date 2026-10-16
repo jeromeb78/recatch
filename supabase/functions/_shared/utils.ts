@@ -183,18 +183,37 @@ export async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Resolves the user from a browser-extension connection token (`Authorization: Bearer rc_…`). */
+/**
+ * A team member's access to an owner's account (account_members.permissions), or null when they're no longer a member.
+ * Used for long-lived connections (extension, Shortcut, Claude) that were set up for someone else's account, so removing
+ * a member or lowering their access takes effect on their next request.
+ */
+export async function memberPermissions(owner: string, member: string): Promise<Record<string, string> | null> {
+  const { data } = await adminClient().from("account_members").select("permissions").eq("owner_id", owner).eq("member_id", member).maybeSingle();
+  return (data?.permissions as Record<string, string> | undefined) ?? null;
+}
+
+export function allows(perms: Record<string, string> | null, area: string, level: "view" | "edit"): boolean {
+  return (LEVEL_RANK[perms?.[area] ?? "none"] ?? 0) >= LEVEL_RANK[level];
+}
+
+/**
+ * The account a browser-extension or iPhone Shortcut code (`Authorization: Bearer rc_…`) adds receipts to: the creator's
+ * own, or the account a team member made it for while they can still add receipts there. Null when invalid.
+ */
 export async function userFromApiToken(req: Request): Promise<string | null> {
   const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!token.startsWith("rc_") || token.length < 20) return null;
   const db = adminClient();
   const { data } = await db
     .from("api_tokens")
-    .select("id, user_id")
+    .select("id, user_id, account_id")
     .eq("token_hash", await sha256Hex(token))
     .is("revoked_at", null)
     .maybeSingle();
   if (!data) return null;
+  const owner = (data.account_id ?? data.user_id) as string;
+  if (owner !== data.user_id && !allows(await memberPermissions(owner, data.user_id as string), "receipts", "edit")) return null;
   await db.from("api_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
-  return data.user_id as string;
+  return owner;
 }

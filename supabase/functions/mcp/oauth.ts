@@ -1,7 +1,7 @@
 // Minimal OAuth 2.1 authorization server for MCP clients (Claude custom connectors):
 // dynamic client registration, authorization code + PKCE (S256), refresh-token rotation.
 // The consent screen lives in the web app (/oauth/authorize) and calls `approve` with the user's session.
-import { adminClient, base64UrlEncode, env, json, sha256Hex, userFromRequest } from "../_shared/utils.ts";
+import { accountFor, adminClient, base64UrlEncode, env, json, memberPermissions, sha256Hex, userFromRequest } from "../_shared/utils.ts";
 
 const ACCESS_TTL_S = 3600;
 const REFRESH_TTL_S = 90 * 24 * 3600;
@@ -122,11 +122,19 @@ export async function approve(req: Request): Promise<Response> {
     return json({ redirect_to: target.toString() });
   }
 
+  // A team member can connect Claude to an account they were invited to (needs receipts or reports access there).
+  let account: string | null = null;
+  if (b.account && b.account !== user.id) {
+    account = (await accountFor(user, b.account, "receipts", "view")) ?? (await accountFor(user, b.account, "reports", "view"));
+    if (!account) return json({ error: "You don't have access to that account" }, 403);
+  }
+
   const code = randomToken("rcx_");
   const { error } = await adminClient().from("oauth_codes").insert({
     code_hash: await sha256Hex(code),
     client_id: clientId,
     user_id: user.id,
+    account_id: account,
     redirect_uri: redirectUri,
     code_challenge: b.code_challenge,
     scope: SCOPE,
@@ -139,12 +147,13 @@ export async function approve(req: Request): Promise<Response> {
 
 /* ---------- token endpoint ---------- */
 
-async function issue(userId: string, clientId: string) {
+async function issue(userId: string, clientId: string, accountId: string | null) {
   const access = randomToken("rca_");
   const refresh = randomToken("rcr_");
   const now = Date.now();
   const { error } = await adminClient().from("oauth_tokens").insert({
     user_id: userId,
+    account_id: accountId,
     client_id: clientId,
     access_hash: await sha256Hex(access),
     refresh_hash: await sha256Hex(refresh),
@@ -181,7 +190,7 @@ export async function token(req: Request): Promise<Response> {
     if (clientId && row.client_id !== clientId) return oauthError("invalid_grant", "Code was issued to another client");
     if (p.redirect_uri && p.redirect_uri !== row.redirect_uri) return oauthError("invalid_grant", "redirect_uri mismatch");
     if ((await s256(p.code_verifier)) !== row.code_challenge) return oauthError("invalid_grant", "PKCE verification failed");
-    return await issue(row.user_id, row.client_id);
+    return await issue(row.user_id, row.client_id, row.account_id ?? null);
   }
 
   if (p.grant_type === "refresh_token") {
@@ -191,7 +200,7 @@ export async function token(req: Request): Promise<Response> {
     if (!row) return oauthError("invalid_grant", "Refresh token is invalid or revoked");
     if (row.refresh_expires_at && Date.parse(row.refresh_expires_at) < Date.now()) return oauthError("invalid_grant", "Refresh token expired");
     if (clientId && row.client_id !== clientId) return oauthError("invalid_grant", "Token was issued to another client");
-    return await issue(row.user_id, row.client_id);
+    return await issue(row.user_id, row.client_id, row.account_id ?? null);
   }
 
   return oauthError("unsupported_grant_type", "Use authorization_code or refresh_token");
@@ -199,18 +208,31 @@ export async function token(req: Request): Promise<Response> {
 
 /* ---------- resource server ---------- */
 
-/** User id for a valid, unexpired, unrevoked access token, else null. */
-export async function userFromAccessToken(req: Request): Promise<string | null> {
+export interface Grant {
+  /** Who connected Claude. */
+  userId: string;
+  /** The account Claude works on: the user's own, or one they were invited to. */
+  owner: string;
+  /** What Claude may do there: null for the owner (everything), else the member's current permissions. */
+  perms: Record<string, string> | null;
+}
+
+/** The grant for a valid, unexpired, unrevoked access token, else null (also when a member's access was removed). */
+export async function userFromAccessToken(req: Request): Promise<Grant | null> {
   const m = req.headers.get("authorization")?.match(/^Bearer\s+(rca_[A-Za-z0-9_-]+)$/);
   if (!m) return null;
   const db = adminClient();
-  const { data } = await db.from("oauth_tokens").select("id, user_id, access_expires_at, last_used_at")
+  const { data } = await db.from("oauth_tokens").select("id, user_id, account_id, access_expires_at, last_used_at")
     .eq("access_hash", await sha256Hex(m[1])).is("revoked_at", null).maybeSingle();
   if (!data || Date.parse(data.access_expires_at) < Date.now()) return null;
   if (!data.last_used_at || Date.now() - Date.parse(data.last_used_at) > 5 * 60_000) {
     await db.from("oauth_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
   }
-  return data.user_id as string;
+  const userId = data.user_id as string;
+  const owner = (data.account_id ?? userId) as string;
+  if (owner === userId) return { userId, owner, perms: null };
+  const perms = await memberPermissions(owner, userId);
+  return perms ? { userId, owner, perms } : null;
 }
 
 export function unauthorized(): Response {
