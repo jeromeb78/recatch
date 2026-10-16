@@ -245,7 +245,11 @@ what they can do:
 Presets (Bookkeeper, Assistant, Accountant read-only, Admin) fill these in; "Fine-tune" sets each area by hand.
 Creating an invite gives a one-time link (valid 7 days) to copy or email. The person opens it, signs up or signs in
 **with the invited email**, and accepts. People who belong to more than one account pick one from the account bar under
-the top navigation. Gmail, the forwarding address, the browser extension and the Claude connector always stay with the owner.
+the top navigation. Gmail and the forwarding address always stay with the owner. Members can set up the phone app /
+iPhone Shortcut, the browser extension and the Claude connector for the account they're working in: the connection stores
+that account (`api_tokens.account_id`, `oauth_tokens.account_id`) and every request re-checks the member's current access
+(Shortcut/extension need receipts edit; Claude tools are filtered by receipts/reports access), so removing a member or
+lowering their access takes effect immediately.
 
 Access is enforced in the database: every table and the receipt files bucket check `can_access(owner, area, level)`
 in row-level security (migration `team`), invite tokens are stored only as SHA-256 hashes, only the owner can grant or

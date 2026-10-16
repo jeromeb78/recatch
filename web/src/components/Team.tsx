@@ -140,7 +140,9 @@ export function TeamSection({ userId }: { userId: string }) {
       <h2>Team</h2>
       <p className="muted small">
         Invite a bookkeeper, assistant or accountant and choose what they can see or change. They use their own login and
-        work in this account's receipts. Gmail, the browser extension and the Claude connector stay with the owner.
+        work in this account's receipts. They can also install the phone app, the browser extension and the Claude connector
+        for this account (in their Settings) — each works only within the access you give them, and removing someone cuts
+        off all of their connections right away. Gmail and the forwarding address stay with the owner.
       </p>
 
       <ul className="member-list">

@@ -48,10 +48,13 @@ function MemberSettings({ userId, email }: { userId: string; email: string }) {
     <div className="narrow">
       <h1>Settings</h1>
       <p className="muted">
-        For <b>{account.ownerEmail}</b>'s account. Gmail, the forwarding address, the browser extension and the Claude connector
-        are managed by the owner.
+        For <b>{account.ownerEmail}</b>'s account. The phone app, browser extension and Claude below work on this account with
+        your access; Gmail and the forwarding address are managed by the owner.
       </p>
       <MembershipSection userId={userId} />
+      <PhoneSection userId={userId} account={account.ownerId} ownerEmail={account.ownerEmail} canCapture={can("receipts", "edit")} />
+      {can("receipts", "edit") && <ExtensionSection userId={userId} account={account.ownerId} ownerEmail={account.ownerEmail} />}
+      {(can("receipts") || can("reports")) && <ClaudeSection userId={userId} account={account.ownerId} ownerEmail={account.ownerEmail} />}
       {can("settings") && <BusinessProfile userId={account.ownerId} readOnly={!can("settings", "edit")} />}
       {can("settings") && <BusinessesSection />}
       <SalesSection />
@@ -201,7 +204,7 @@ function OwnerSettings({ userId, email }: { userId: string; email: string }) {
 
       <PhoneSection userId={userId} />
       <ExtensionSection userId={userId} />
-      <ClaudeSection />
+      <ClaudeSection userId={userId} />
       <BusinessProfile userId={userId} />
       <BusinessesSection />
       <SalesSection />

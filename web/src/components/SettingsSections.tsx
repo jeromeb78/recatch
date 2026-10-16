@@ -38,7 +38,11 @@ export function BusinessProfile({ userId, readOnly = false }: { userId: string; 
 
 /* ---------------- Browser extension ---------------- */
 
-interface Token { id: string; name: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
+interface Token { id: string; name: string; created_at: string; last_used_at: string | null; revoked_at: string | null; account_id: string | null }
+
+/** Connections made by `userId` for `account` (their own account when they match). */
+export const forAccount = <T extends { account_id: string | null }>(rows: T[], userId: string, account: string) =>
+  rows.filter((r) => (r.account_id ?? userId) === account);
 
 function randomToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -50,7 +54,11 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function ExtensionSection({ userId, compact = false }: { userId: string; compact?: boolean }) {
+/**
+ * Browser extension codes. `account` is the account receipts go to: your own, or (for a team member) the account you're
+ * working in; the code stops working if the owner removes you or takes away your access to add receipts.
+ */
+export function ExtensionSection({ userId, account = userId, ownerEmail, compact = false }: { userId: string; account?: string; ownerEmail?: string; compact?: boolean }) {
   const [tokens, setTokens] = useState<Token[]>([]);
   const [code, setCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -58,18 +66,19 @@ export function ExtensionSection({ userId, compact = false }: { userId: string; 
   const confirmIdentity = useConfirmIdentity();
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("api_tokens").select("id, name, created_at, last_used_at, revoked_at")
-      .is("revoked_at", null).order("created_at", { ascending: false });
-    setTokens((data ?? []) as Token[]);
-  }, []);
+    const { data } = await supabase.from("api_tokens").select("id, name, created_at, last_used_at, revoked_at, account_id")
+      .eq("user_id", userId).is("revoked_at", null).order("created_at", { ascending: false });
+    setTokens(forAccount((data ?? []) as Token[], userId, account));
+  }, [userId, account]);
   useEffect(() => { load(); }, [load]);
 
   async function create() {
     setError(null);
-    if (!(await confirmIdentity("A connection code lets the browser extension add receipts to your account."))) return;
+    if (!(await confirmIdentity(`A connection code lets the browser extension add receipts to ${ownerEmail ? `${ownerEmail}'s` : "your"} account.`))) return;
     const token = randomToken();
     const { error } = await supabase.from("api_tokens").insert({
       user_id: userId,
+      account_id: account === userId ? null : account,
       name: `Browser extension · ${new Date().toLocaleDateString()}`,
       token_hash: await sha256Hex(token),
     });
@@ -92,6 +101,7 @@ export function ExtensionSection({ userId, compact = false }: { userId: string; 
         <p className="muted small">
           Import order history from Walmart, Target and Amazon in bulk using your own signed-in browser. Install the Receipt
           Catcher extension (desktop Chrome or Edge), then paste a connection code into it.
+          {ownerEmail && <> Codes you make here add receipts to <b>{ownerEmail}</b>'s account.</>}
         </p>
       </>}
       <InstallExtension />
@@ -103,7 +113,7 @@ export function ExtensionSection({ userId, compact = false }: { userId: string; 
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          <p className="warn-text small">Shown once. Paste it into the extension now; anyone with this code can add receipts to your account.</p>
+          <p className="warn-text small">Shown once. Paste it into the extension now; anyone with this code can add receipts to {ownerEmail ? `${ownerEmail}'s` : "your"} account.</p>
           <button className="link" onClick={() => setCode(null)}>Done</button>
         </div>
       ) : (
@@ -210,23 +220,25 @@ function InstallExtension() {
 
 /* ---------------- Claude connector ---------------- */
 
-interface Grant { id: string; client_id: string; created_at: string; last_used_at: string | null; client: { client_name: string } | null }
+interface Grant { id: string; client_id: string; account_id: string | null; created_at: string; last_used_at: string | null; client: { client_name: string } | null }
 
 const IMPORT_PROMPT = `Use Receipt Catcher to import my order history. Open my Walmart purchase history (walmart.com → Account → Purchase history). Collect the order links for the last 12 months, call check_imported to skip ones already in Receipt Catcher, then open each new order one at a time and call add_receipt with the page's full text and URL. Don't change, cancel or reorder anything. If a sign-in or CAPTCHA appears, stop and ask me. Finish with how many were added.`;
 
-export function ClaudeSection() {
+/** The Claude connector. Team members connect it to the account they're working in and get only the access they have there. */
+export function ClaudeSection({ userId, account = userId, ownerEmail }: { userId?: string; account?: string; ownerEmail?: string } = {}) {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
   const url = `${window.location.origin}/mcp`;
 
   const load = useCallback(async () => {
     const { data } = await supabase.from("oauth_tokens")
-      .select("id, client_id, created_at, last_used_at, client:oauth_clients(client_name)")
+      .select("id, client_id, account_id, created_at, last_used_at, client:oauth_clients(client_name)")
       .is("revoked_at", null).order("created_at", { ascending: false });
-    // One row per connected app (refreshes create new token rows).
+    // One row per connected app (refreshes create new token rows), for the account shown.
     const seen = new Set<string>();
-    setGrants(((data ?? []) as unknown as Grant[]).filter((g) => !seen.has(g.client_id) && seen.add(g.client_id)));
-  }, []);
+    const rows = (data ?? []) as unknown as Grant[];
+    setGrants((userId ? forAccount(rows, userId, account!) : rows).filter((g) => !seen.has(g.client_id) && seen.add(g.client_id)));
+  }, [userId, account]);
   useEffect(() => { load(); }, [load]);
 
   async function copy(text: string, key: string) {
@@ -237,7 +249,8 @@ export function ClaudeSection() {
 
   async function disconnect(g: Grant) {
     if (!confirm(`Disconnect ${g.client?.client_name ?? "this app"}? It will lose access to Receipt Catcher right away.`)) return;
-    await supabase.from("oauth_tokens").update({ revoked_at: new Date().toISOString() }).eq("client_id", g.client_id).is("revoked_at", null);
+    const q = supabase.from("oauth_tokens").update({ revoked_at: new Date().toISOString() }).eq("client_id", g.client_id).is("revoked_at", null);
+    await (g.account_id ? q.eq("account_id", g.account_id) : q.is("account_id", null));
     load();
   }
 
@@ -247,6 +260,8 @@ export function ClaudeSection() {
       <p className="muted small">
         Connect Receipt Catcher to Claude to ask about your spending and inventory costs, add receipts from chat, and — with
         Claude in Chrome — import store order history in your own browser.
+        {ownerEmail && <> Connected to <b>{ownerEmail}</b>'s account, Claude can do what your access allows there: see or add
+          receipts, and see profit and costs.</>}
       </p>
       <div className="copy">
         <code>{url}</code>
@@ -255,7 +270,7 @@ export function ClaudeSection() {
       <ol className="small muted steps-plain">
         <li>In Claude, open <b>Settings → Connectors → Add custom connector</b>.</li>
         <li>Name it “Receipt Catcher”, paste the URL above, and click <b>Add</b>, then <b>Connect</b>.</li>
-        <li>Sign in here if asked and click <b>Allow</b>.</li>
+        <li>Sign in here if asked{ownerEmail ? <>, choose <b>{ownerEmail}</b>'s account,</> : ""} and click <b>Allow</b>.</li>
       </ol>
       <details>
         <summary className="small">Prompt for importing order history with Claude in Chrome</summary>

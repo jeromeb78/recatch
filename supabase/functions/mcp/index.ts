@@ -7,9 +7,9 @@
 // The consent page (/oauth/authorize) is a page in the web app that calls /mcp/oauth/approve.
 import {
   approve, authorizationServerMetadata, clientInfo, protectedResourceMetadata, register, token, unauthorized,
-  userFromAccessToken,
+  type Grant, userFromAccessToken,
 } from "./oauth.ts";
-import { callTool, TOOLS } from "./tools.ts";
+import { callTool, toolsFor } from "./tools.ts";
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -35,7 +35,7 @@ function rpcError(id: RpcRequest["id"], code: number, message: string) {
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
 }
 
-async function handleRpc(msg: RpcRequest, userId: string) {
+async function handleRpc(msg: RpcRequest, grant: Grant) {
   const isNotification = msg.id === undefined;
   if (typeof msg !== "object" || msg?.jsonrpc !== "2.0" || typeof msg.method !== "string") {
     return rpcError(null, -32600, "Invalid request");
@@ -56,12 +56,12 @@ async function handleRpc(msg: RpcRequest, userId: string) {
       return rpcResult(msg.id, {});
     case "tools/list":
       return rpcResult(msg.id, {
-        tools: TOOLS.map(({ handler: _h, ...t }) => t),
+        tools: toolsFor(grant).map(({ handler: _h, area: _a, level: _l, ...t }) => t),
       });
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
-      return rpcResult(msg.id, await callTool(name, userId, args));
+      return rpcResult(msg.id, await callTool(name, grant, args));
     }
     case "resources/list":
       return rpcResult(msg.id, { resources: [] });
@@ -98,8 +98,8 @@ async function route(req: Request): Promise<Response> {
       // No server-initiated streams: this server answers every POST with plain JSON.
       return new Response("Method not allowed", { status: 405, headers: { Allow: "POST" } });
     }
-    const userId = await userFromAccessToken(req);
-    if (!userId) return unauthorized();
+    const grant = await userFromAccessToken(req);
+    if (!grant) return unauthorized();
 
     let body: unknown;
     try {
@@ -109,7 +109,7 @@ async function route(req: Request): Promise<Response> {
     }
     const batch = Array.isArray(body);
     const messages = (batch ? body : [body]) as RpcRequest[];
-    const replies = (await Promise.all(messages.map((m) => handleRpc(m, userId)))).filter((r) => r !== null);
+    const replies = (await Promise.all(messages.map((m) => handleRpc(m, grant)))).filter((r) => r !== null);
     if (!replies.length) return new Response(null, { status: 202 });
     return Response.json(batch ? replies : replies[0]);
   }

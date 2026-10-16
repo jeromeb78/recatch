@@ -31,7 +31,14 @@ function Copy({ value, label }: { value: string; label: string }) {
 }
 
 /** Settings → Phone: install the app, share receipts from other apps, and the iPhone Shortcut. */
-export function PhoneSection({ userId }: { userId: string }) {
+export function PhoneSection({ userId, account = userId, ownerEmail, canCapture = true }: {
+  userId: string;
+  /** The account Shortcut receipts go to: your own, or the team account you're working in. */
+  account?: string;
+  ownerEmail?: string;
+  /** Team members need permission to add receipts for the Shortcut. */
+  canCapture?: boolean;
+}) {
   const confirmIdentity = useConfirmIdentity();
   const [install, setInstall] = useState<InstallEvent | null>(null);
   const [installed, setInstalled] = useState(() => window.matchMedia?.("(display-mode: standalone)").matches ?? false);
@@ -53,10 +60,11 @@ export function PhoneSection({ userId }: { userId: string }) {
 
   async function makeCode() {
     setError(null);
-    if (!(await confirmIdentity("The iPhone Shortcut will be able to add receipts to your account."))) return;
+    if (!(await confirmIdentity(`The iPhone Shortcut will be able to add receipts to ${ownerEmail ? `${ownerEmail}'s` : "your"} account.`))) return;
     const token = randomToken();
     const { error } = await supabase.from("api_tokens").insert({
       user_id: userId,
+      account_id: account === userId ? null : account,
       name: `iPhone Shortcut · ${new Date().toLocaleDateString()}`,
       token_hash: await sha256Hex(token),
     });
@@ -70,6 +78,7 @@ export function PhoneSection({ userId }: { userId: string }) {
       <p className="muted small">
         Get receipts that are already on your phone — photos, screenshots of e-receipts, PDFs from store apps or email — into
         Receipt Catcher without opening a computer.
+        {ownerEmail && <> Snaps, shares and Shortcut receipts go to <b>{ownerEmail}</b>'s account while you're working in it.</>}
       </p>
 
       <h3>1 · Put Receipt Catcher on your home screen</h3>
@@ -94,7 +103,9 @@ export function PhoneSection({ userId }: { userId: string }) {
         iPhone doesn't let web apps appear in the Share menu, so a Shortcut sends the photo instead (about 2 minutes to set up,
         once). It's also the fastest way on iPhone: Share → <b>Add to Receipt Catcher</b>.
       </p>
-      {!code ? (
+      {!canCapture ? (
+        <p className="muted small">Your access to this account doesn't include adding receipts. Ask the owner to change it in Settings → Team.</p>
+      ) : !code ? (
         <div className="actions tight"><button onClick={makeCode}>Create a Shortcut code</button></div>
       ) : (
         <div className="banner ok shortcut-code">
