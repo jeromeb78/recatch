@@ -3,6 +3,7 @@ import { ingest, pageMessageId } from "../_shared/ingest.ts";
 import { TAX_LINE_CODES, TAX_LINES, USE_TYPES } from "../_shared/tax.ts";
 import { adminClient, sha256Hex } from "../_shared/utils.ts";
 import { appUrl } from "./oauth.ts";
+import { getOrder, inventoryOnHand, ProfitError, productProfit, profitSummary, setSkuCost, shippingCosts, stripeCheck } from "./profit.ts";
 
 type Args = Record<string, unknown>;
 type Handler = (userId: string, args: Args) => Promise<unknown>;
@@ -220,6 +221,12 @@ const inventoryCosts: Handler = async (userId, a) => {
 /* ---------------- registry ---------------- */
 
 const READ = { readOnlyHint: true, openWorldHint: false };
+const PERIOD = {
+  from: { type: "string", description: "YYYY-MM-DD (default: start of this year)" },
+  to: { type: "string", description: "YYYY-MM-DD (default: today)" },
+  year: { type: "integer", description: "A whole year instead of from/to." },
+  business: { type: "string", description: "Business name or id, \"none\" for unassigned, or \"all\" (default)." },
+};
 
 export const TOOLS: Tool[] = [
   {
@@ -336,6 +343,96 @@ export const TOOLS: Tool[] = [
     annotations: { title: "Update a line item", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     handler: updateLineItem,
   },
+  {
+    name: "profit_summary",
+    title: "Profit summary",
+    description:
+      "Profit and loss for the user's selling business: sales (WooCommerce / imported, checked against Stripe), refunds, " +
+      "payment fees, cost of goods sold, Easyship label costs and other business expenses, by month, with Schedule C lines. " +
+      "Defaults to this year to date.",
+    inputSchema: { type: "object", properties: { ...PERIOD }, additionalProperties: false },
+    annotations: { title: "Profit summary", ...READ },
+    handler: profitSummary,
+  },
+  {
+    name: "product_profit",
+    title: "Profit by product",
+    description:
+      "Units sold, sales, unit cost (and where that cost comes from), cost of goods, profit and margin for each store product / SKU. " +
+      "Use sort=loss to find products sold below cost.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...PERIOD,
+        sku: { type: "string", description: "Exact store SKU." },
+        query: { type: "string", description: "Filter by product name or SKU." },
+        sort: { type: "string", enum: ["revenue", "profit", "margin", "units", "loss"] },
+        limit: { type: "integer", minimum: 1, maximum: 500 },
+      },
+      additionalProperties: false,
+    },
+    annotations: { title: "Profit by product", ...READ },
+    handler: productProfit,
+  },
+  {
+    name: "stripe_reconciliation",
+    title: "Stripe vs store check",
+    description:
+      "Compares Stripe payments (the source of truth for money) with store orders: matched orders, Stripe payments with no store order, " +
+      "store orders paid by card with no Stripe charge, amount and refund/status differences, disputes.",
+    inputSchema: { type: "object", properties: { ...PERIOD, limit: { type: "integer", minimum: 1, maximum: 200 } }, additionalProperties: false },
+    annotations: { title: "Stripe check", ...READ },
+    handler: stripeCheck,
+  },
+  {
+    name: "shipping_costs",
+    title: "Shipping costs (Easyship)",
+    description:
+      "Easyship label spend versus the shipping customers paid on Stripe-confirmed orders: shipping profit, orders losing money on shipping, " +
+      "refunded orders that already shipped, labels with no store order and paid orders with no label.",
+    inputSchema: { type: "object", properties: { ...PERIOD, limit: { type: "integer", minimum: 1, maximum: 200 } }, additionalProperties: false },
+    annotations: { title: "Shipping costs", ...READ },
+    handler: shippingCosts,
+  },
+  {
+    name: "inventory_on_hand",
+    title: "Inventory on hand",
+    description: "Units bought, sold and on hand per SKU or product line with value at cost, as of a date (default today). Usable as ending inventory.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        as_of: { type: "string", description: "YYYY-MM-DD" },
+        business: PERIOD.business,
+        limit: { type: "integer", minimum: 1, maximum: 500 },
+      },
+      additionalProperties: false,
+    },
+    annotations: { title: "Inventory on hand", ...READ },
+    handler: inventoryOnHand,
+  },
+  {
+    name: "get_order",
+    title: "Get a store order",
+    description: "One store order by its order number: items with unit cost and cost source, Stripe payments, Easyship shipments and the order's profit.",
+    inputSchema: { type: "object", properties: { order: { type: "string", description: "Store order number, e.g. 12345 or #12345." } }, required: ["order"], additionalProperties: false },
+    annotations: { title: "Get a store order", ...READ },
+    handler: getOrder,
+  },
+  {
+    name: "set_sku_cost",
+    title: "Set a SKU's cost",
+    description:
+      "Set your own cost of goods per unit for a store SKU. It overrides the store, receipt and product-line cost everywhere. " +
+      "Pass unit_cost null to clear it. Confirm the amount with the user before saving.",
+    inputSchema: {
+      type: "object",
+      properties: { sku: { type: "string" }, unit_cost: { type: ["number", "null"], minimum: 0 } },
+      required: ["sku", "unit_cost"],
+      additionalProperties: false,
+    },
+    annotations: { title: "Set a SKU's cost", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    handler: setSkuCost,
+  },
 ];
 
 export async function callTool(name: string, userId: string, args: Args) {
@@ -348,8 +445,9 @@ export async function callTool(name: string, userId: string, args: Args) {
       structuredContent: data as Record<string, unknown>,
     };
   } catch (e) {
-    const msg = e instanceof ToolError ? e.message : `Receipt Catcher error: ${e instanceof Error ? e.message : String(e)}`;
-    if (!(e instanceof ToolError)) console.error("mcp tool", name, e);
+    const known = e instanceof ToolError || e instanceof ProfitError;
+    const msg = known ? (e as Error).message : `Receipt Catcher error: ${e instanceof Error ? e.message : String(e)}`;
+    if (!known) console.error("mcp tool", name, e);
     return { content: [{ type: "text", text: msg }], isError: true };
   }
 }

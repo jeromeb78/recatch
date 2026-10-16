@@ -187,7 +187,13 @@ privacy policy at `/privacy`), then set `VITE_EXTENSION_STORE_URL` and `VITE_CON
 The `mcp` function is a remote MCP server with its own OAuth 2.1 (dynamic client registration, PKCE, rotating refresh
 tokens, all stored hashed). Users add it in Claude under **Settings → Connectors → Add custom connector** with
 `https://<your-app-domain>/mcp`, then approve on the app's `/oauth/authorize` screen. Tools: `add_receipt`,
-`check_imported`, `search_receipts`, `get_receipt`, `spending_summary`, `inventory_costs`, `update_line_item`.
+`check_imported`, `search_receipts`, `get_receipt`, `spending_summary`, `inventory_costs`, `update_line_item`, and for
+sellers `profit_summary`, `product_profit`, `stripe_reconciliation`, `shipping_costs`, `inventory_on_hand`, `get_order`,
+`set_sku_cost`.
+
+- The profit tools compute exactly what Reports → Profit shows: `supabase/functions/_shared/profit/` holds generated copies
+  of `web/src/lib/{pnl,costs,reconcile,shipping,…}.ts`. After editing those, run `node scripts/sync-profit-lib.mjs`
+  (a test fails while the copies are stale) and redeploy `mcp`.
 
 - OAuth discovery must live at the domain root, so `web/vercel.json` (and `public/_redirects`) proxy `/mcp`,
   `/.well-known/oauth-*` and `/oauth/register|token` to the function. **They hardcode the Supabase project ref**; change it if you fork.
@@ -267,6 +273,16 @@ Below the overview are three views:
 
 Analytics are computed in the browser from `receipts` and the `inventory_lines` view (`web/src/lib/analytics.ts`,
 unit-tested).
+
+## Importing receipts from a spreadsheet
+
+Add → **Import from a spreadsheet (CSV)** (also used automatically when a CSV is picked or shared to the installed app on
+Android). Presets: **Amazon order history** (Request your data → Retail.OrderHistory CSV: one receipt per order with items,
+ASINs as store SKUs, cancelled orders skipped), **bank / card statements** (one receipt per charge; payments, transfers and
+deposits skipped; refunds optional; the charge sign is detected; descriptions cleaned to store names), and **any CSV** with
+picked columns (one row per purchase, or one row per item grouped by order number). Parsing is in the browser
+(`web/src/lib/receiptImport.ts`). Purchases already present (same source row, same order number, or same store + amount within
+3 days) are skipped, so re-importing or overlapping with Gmail is safe. Imported items then go through categorize-items.
 
 ## Phone
 
