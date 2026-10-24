@@ -21,3 +21,4 @@ export const CloseIcon = ({ size = 18 }: P) => svg(size, <path d="M6 6l12 12M18 
 export const AlertIcon = ({ size = 20 }: P) => svg(size, <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 18v.5" /></>);
 export const DownloadIcon = ({ size = 18 }: P) => svg(size, <><path d="M12 3v12M7 10l5 5 5-5" /><path d="M4 19h16" /></>);
 export const FileIcon = ({ size = 28 }: P) => svg(size, <><path d="M7 3h7l5 5v13H7z" /><path d="M14 3v5h5" /></>, 1.6);
+export const UploadIcon = ({ size = 22 }: P) => svg(size, <><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" /></>);

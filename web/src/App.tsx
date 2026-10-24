@@ -3,7 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { useReviewCount } from "./lib/useReviewCount";
-import { CameraIcon, CheckIcon, HomeIcon, ReceiptIcon, SettingsIcon } from "./components/Icons";
+import { CameraIcon, CheckIcon, HomeIcon, ReceiptIcon, SettingsIcon, UploadIcon } from "./components/Icons";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import Welcome from "./pages/Welcome";
@@ -13,6 +13,7 @@ import ReceiptDetail from "./pages/ReceiptDetail";
 import Review from "./pages/Review";
 import Reports from "./pages/Reports";
 import Add from "./pages/Add";
+import Import from "./pages/Import";
 import Settings from "./pages/Settings";
 import OAuthConsent from "./pages/OAuthConsent";
 import Privacy from "./pages/Privacy";
@@ -130,6 +131,7 @@ function Shell({ userId, email }: { userId: string; email: string }) {
           {can("reports") && <NavLink to="/reports">Reports</NavLink>}
           <NavLink to="/settings">Settings</NavLink>
           {can("receipts", "edit") && <NavLink to="/add" className="snap-pill"><CameraIcon size={18} />Snap</NavLink>}
+          {can("receipts", "edit") && <NavLink to="/import" className="import-pill"><UploadIcon size={18} />Import</NavLink>}
         </nav>
       </header>
       <AccountBar />
@@ -150,6 +152,7 @@ function Shell({ userId, email }: { userId: string; email: string }) {
           <Route path="/review" element={<Allowed area="receipts" level="edit"><Review /></Allowed>} />
           <Route path="/reports" element={<Allowed area="reports"><Reports /></Allowed>} />
           <Route path="/add" element={<Allowed area="receipts" level="edit"><Add /></Allowed>} />
+          <Route path="/import" element={<Allowed area="receipts" level="edit"><Import /></Allowed>} />
           <Route path="/settings" element={<Settings userId={userId} email={email} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -159,6 +162,7 @@ function Shell({ userId, email }: { userId: string; email: string }) {
         <NavLink to="/" end><HomeIcon />Home</NavLink>
         {can("receipts") && <NavLink to="/receipts"><ReceiptIcon />Receipts</NavLink>}
         {can("receipts", "edit") && <NavLink to="/add" className="snap" aria-label="Snap a receipt"><CameraIcon /></NavLink>}
+        {can("receipts", "edit") && <NavLink to="/import"><UploadIcon />Import</NavLink>}
         {can("receipts", "edit") && <NavLink to="/review"><CheckIcon />Review{badge}</NavLink>}
         <NavLink to="/settings"><SettingsIcon />Settings</NavLink>
       </nav>

@@ -5,6 +5,7 @@ import { accountId } from "../lib/account";
 import { money, shortDate } from "../lib/format";
 import { useCategories } from "../lib/useCategories";
 import { parseCsv } from "../lib/salesImport";
+import { readSpreadsheet, SPREADSHEET_ACCEPT } from "../lib/xlsx";
 import {
   detectReceiptPreset, importReceipts, isDuplicate, RECEIPT_PRESETS, RFIELD_LABEL,
   type ImportReceipt, type ReceiptPreset, type RField, type RMapping,
@@ -14,7 +15,7 @@ type Existing = { merchant: string | null; purchase_date: string | null; total: 
 const shift = (d: string, days: number) => new Date(Date.parse(`${d}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
 const sourceId = (r: ImportReceipt) => `csv:${r.key}`.slice(0, 300);
 
-/** Import receipts from a CSV: Amazon order history, a bank/card statement, or any spreadsheet. Works from a phone's file picker. */
+/** Import receipts from a CSV or Excel file: Amazon order history, a bank/card statement, or any list. Works from a phone's file picker. */
 export function ReceiptImport({ initial, onClose }: { initial?: { name: string; text: string }; onClose: () => void }) {
   const { categories } = useCategories();
   const [file, setFile] = useState<{ name: string; text: string } | null>(initial ?? null);
@@ -26,6 +27,17 @@ export function ReceiptImport({ initial, onClose }: { initial?: { name: string; 
   const [busy, setBusy] = useState<string | null>(null);
   const [done, setDone] = useState<{ added: number; skipped: number; items: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  async function pick(f: File | undefined) {
+    if (!f) return;
+    setError(null);
+    try {
+      const next = await readSpreadsheet(f);
+      setMap({}); setDone(null); setFile(next);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   useEffect(() => { if (file) setPreset(detectReceiptPreset(parseCsv(file.text.slice(0, 20000)))); }, [file]);
   const header = useMemo(() => (file ? parseCsv(file.text.slice(0, 20000))[0] ?? [] : []), [file]);
@@ -119,7 +131,7 @@ export function ReceiptImport({ initial, onClose }: { initial?: { name: string; 
       <section className="card stack-sm">
         <h2>Imported</h2>
         <p>{done.added.toLocaleString()} receipt{done.added === 1 ? "" : "s"} added{done.items ? ` with ${done.items.toLocaleString()} items` : ""}.
-          {done.skipped ? ` ${done.skipped.toLocaleString()} were already in Receipt Catcher.` : ""}</p>
+          {done.skipped ? ` ${done.skipped.toLocaleString()} ${done.skipped === 1 ? "was" : "were"} already in Receipt Catcher.` : ""}</p>
         <div className="actions tight">
           <Link className="btn primary" to="/receipts">See receipts</Link>
           <button className="link" onClick={onClose}>Done</button>
@@ -131,11 +143,15 @@ export function ReceiptImport({ initial, onClose }: { initial?: { name: string; 
   return (
     <section className="card stack-sm receipt-import">
       <div className="row-between"><h2>Import from a spreadsheet</h2><button className="link" onClick={onClose} disabled={!!busy}>Close</button></div>
-      <label className="field">CSV file
-        <input type="file" accept=".csv,text/csv,text/comma-separated-values,text/plain"
-          onChange={async (e) => { const f = e.target.files?.[0]; if (f) { setMap({}); setDone(null); setFile({ name: f.name, text: await f.text() }); } }} />
-      </label>
-      {file && initial && file.name === initial.name && <p className="muted small">Shared file: {file.name}</p>}
+      {file ? (
+        <div className="row-between import-file"><span>📄 <b>{file.name}</b></span>
+          <label className="link">Change file<input type="file" hidden accept={`${SPREADSHEET_ACCEPT},text/plain`} onChange={(e) => pick(e.target.files?.[0])} /></label>
+        </div>
+      ) : (
+        <label className="field">CSV or Excel file
+          <input type="file" accept={`${SPREADSHEET_ACCEPT},text/plain`} onChange={(e) => pick(e.target.files?.[0])} />
+        </label>
+      )}
       <label className="field">File type
         <select value={preset} onChange={(e) => setPreset(e.target.value as ReceiptPreset)}>
           {(Object.keys(RECEIPT_PRESETS) as ReceiptPreset[]).map((p) => <option key={p} value={p}>{RECEIPT_PRESETS[p].label}</option>)}
