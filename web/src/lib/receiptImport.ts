@@ -13,9 +13,9 @@ export const RECEIPT_PRESETS: Record<ReceiptPreset, { label: string; how: string
   },
   statement: {
     label: "Bank or credit card statement",
-    how: "Download transactions as CSV from your bank or card website (or app → Statements → Export). One row per charge, no items.",
+    how: "Download transactions as CSV or Excel from your bank or card website (or app → Statements → Export). One row per charge, no items.",
   },
-  generic: { label: "Other (pick the columns)", how: "Any CSV with one row per purchase, or one row per item with an order number." },
+  generic: { label: "Other (pick the columns)", how: "Any CSV or Excel sheet with one row per purchase, or one row per item with an order number." },
 };
 
 export type RField = "date" | "store" | "total" | "order" | "item" | "quantity" | "price" | "tax";

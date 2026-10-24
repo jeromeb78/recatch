@@ -278,10 +278,14 @@ Below the overview are three views:
 Analytics are computed in the browser from `receipts` and the `inventory_lines` view (`web/src/lib/analytics.ts`,
 unit-tested).
 
-## Importing receipts from a spreadsheet
+## Importing receipts (CSV, Excel, PDF)
 
-Add → **Import from a spreadsheet (CSV)** (also used automatically when a CSV is picked or shared to the installed app on
-Android). Presets: **Amazon order history** (Request your data → Retail.OrderHistory CSV: one receipt per order with items,
+The **Import** button (right of Snap in the phone tab bar, next to Snap in the desktop header) opens `/import`: pick or
+drop CSV, Excel (.xlsx) and PDF files, several at once. Spreadsheets open the importer below (one at a time, with a preview);
+PDFs are each uploaded and read as one receipt by process-upload, like Snap. Excel workbooks are read in the browser without
+a library (`web/src/lib/xlsx.ts`: zip + XML, first sheet with data, date-formatted cells → YYYY-MM-DD) and converted to CSV;
+old binary .xls files get a message to re-save as .xlsx or CSV. CSV/Excel files picked on Snap or shared to the installed app
+on Android open the same importer. Presets: **Amazon order history** (Request your data → Retail.OrderHistory CSV: one receipt per order with items,
 ASINs as store SKUs, cancelled orders skipped), **bank / card statements** (one receipt per charge; payments, transfers and
 deposits skipped; refunds optional; the charge sign is detected; descriptions cleaned to store names), and **any CSV** with
 picked columns (one row per purchase, or one row per item grouped by order number). Parsing is in the browser
