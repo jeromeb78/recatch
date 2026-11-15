@@ -1,0 +1,130 @@
+# Baseline Semgrep rules from the secure-app-baseline skill, with paths fitted
+# to this repo. Each rule encodes a mistake that has happened in
+# real apps. CI runs Semgrep with --baseline-commit, so only new findings fail.
+rules:
+  - id: service-role-key-in-client-code
+    message: >-
+      The Supabase service-role key bypasses RLS and must only be read in server
+      code. Referencing it from client code, an extension or a public env var
+      ships it to every visitor.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include: ["/web/", "/extension/"]
+    pattern-regex: (SERVICE_ROLE|NEXT_PUBLIC_[A-Z_]*SERVICE|VITE_[A-Z_]*SERVICE)
+
+  - id: public-env-secret
+    message: >-
+      VITE_ / NEXT_PUBLIC_ variables are bundled into the browser. Secrets must
+      not use these prefixes.
+    severity: ERROR
+    languages: [generic]
+    pattern-regex: (VITE|NEXT_PUBLIC|EXPO_PUBLIC)_[A-Z0-9_]*(SECRET|PRIVATE|SERVICE_ROLE|WEBHOOK)[A-Z0-9_]*
+
+  - id: server-fetch-without-ssrf-guard
+    message: >-
+      Server-side fetch of a non-constant URL. Any address a caller, a fetched
+      page, an integration setting or an LLM can influence must go through
+      safeFetch() from ssrf-guard.ts. Constant API hosts are fine.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include: ["/supabase/functions/"]
+      exclude: ["**/ssrf-guard.ts"]
+    patterns:
+      - pattern: fetch($URL, ...)
+      - pattern-not: fetch("...", ...)
+      # Template literals are skipped: almost all are fixed API hosts. Review
+      # any that interpolate a caller-supplied base URL by hand.
+      - pattern-not: fetch(`...`, ...)
+      - metavariable-pattern:
+          metavariable: $URL
+          patterns:
+            - pattern-not: $SAFE.toString()
+            - pattern-not: $SAFE.href
+
+  - id: dangerously-set-inner-html
+    message: >-
+      dangerouslySetInnerHTML with a value that isn't visibly sanitized. Escape
+      text, or run HTML through DOMPurify.sanitize(), first.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude: ["**/components/ui/**", "**/*.test.*"]
+    patterns:
+      - pattern: |
+          <$EL dangerouslySetInnerHTML={{ __html: $X }} />
+      - pattern-not: |
+          <$EL dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(...) }} />
+      - pattern-not: |
+          <$EL dangerouslySetInnerHTML={{ __html: sanitize(...) }} />
+
+  - id: inner-html-assignment
+    message: innerHTML / outerHTML / insertAdjacentHTML with non-literal content. Use textContent or escape first.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude: ["**/*.test.*"]
+    pattern-either:
+      - patterns:
+          - pattern: $E.innerHTML = $X
+          - pattern-not: $E.innerHTML = "..."
+      - patterns:
+          - pattern: $E.outerHTML = $X
+          - pattern-not: $E.outerHTML = "..."
+      - patterns:
+          - pattern: $E.insertAdjacentHTML($P, $X)
+          - pattern-not: $E.insertAdjacentHTML($P, "...")
+
+  - id: dynamic-code-execution
+    message: eval / new Function / string timers execute arbitrary code.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude: ["**/*.test.*", "**/node_modules/**"]
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: setTimeout("...", ...)
+      - pattern: setInterval("...", ...)
+
+  - id: fail-open-secret-check
+    message: >-
+      `if (SECRET && ...)` skips the check entirely when the env var is unset, so
+      the endpoint serves everyone. Use requireSecret(), which refuses when no
+      secret is configured.
+    severity: ERROR
+    languages: [typescript, javascript]
+    patterns:
+      - pattern-either:
+          - pattern: if ($S && $H !== $X) { ... }
+          - pattern: if ($S && $H != $X) { ... }
+      # Narrow to names that look like secrets.
+      - metavariable-regex:
+          metavariable: $S
+          regex: (?i).*(secret|token|key).*
+
+  - id: error-stack-in-response
+    message: Returning an error's stack or raw message to the client exposes internals. Log it; return a generic message.
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      include: ["/supabase/functions/"]
+    pattern-either:
+      - pattern: 'new Response(JSON.stringify({ ..., stack: $E.stack, ... }), ...)'
+      - pattern: new Response(String($E), ...)
+      - pattern: 'Response.json({ error: String($E) }, ...)'
+      - pattern: 'NextResponse.json({ error: String($E) }, ...)'
+
+  - id: workflow-expression-in-run
+    message: >-
+      A ${{ }} expression inside run: is pasted into the shell, so a crafted
+      branch name, PR title or input becomes a command. Pass it through env:.
+    severity: ERROR
+    languages: [yaml]
+    paths:
+      include: ["/.github/workflows/"]
+    patterns:
+      - pattern-inside: |
+          run: $SCRIPT
+      - pattern-regex: \$\{\{\s*(github\.event\.|github\.head_ref|inputs\.)[^}]*\}\}
