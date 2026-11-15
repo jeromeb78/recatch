@@ -1,0 +1,146 @@
+name: Security Checks
+
+# Security gate from the secure-app-baseline skill. Make it a required check
+# in branch protection.
+#
+# Gating: secrets and Semgrep fail only on what a change introduces (new commits
+# / --baseline-commit), so the workflow can be added to a repo with existing
+# findings. Dependency audit (high+ in shipped deps), tests and build must pass.
+# Every ${{ }} value a PR author could influence reaches scripts through env:.
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  schedule:
+    - cron: "23 5 * * 1"   # weekly full scan
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  # Space-separated directories that contain a lockfile for something that ships.
+  PACKAGES: "web"
+  GITLEAKS_VERSION: "8.28.0"
+  GITLEAKS_SHA256: "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb"
+  SEMGREP_VERSION: "1.178.0"
+
+jobs:
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (checksum-verified)
+        run: |
+          curl -fsSL -o gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks && sudo mv gitleaks /usr/local/bin/
+      - name: Scan
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          CFG=""; [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
+          case "$EVENT" in
+            pull_request) BASE="$PR_BASE" ;;
+            push) BASE="$PUSH_BEFORE" ;;
+            *) BASE="" ;;
+          esac
+          if echo "$BASE" | grep -Eq '^[0-9a-f]{40}$' && [ "$BASE" != "0000000000000000000000000000000000000000" ]; then
+            gitleaks git $CFG --redact --no-banner --log-opts="$BASE..HEAD" .
+          else
+            gitleaks git $CFG --redact --no-banner .
+          fi
+
+  dependencies:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Audit shipped dependencies (high+ blocks)
+        run: |
+          fail=0
+          for dir in $PACKAGES; do
+            echo "::group::$dir"
+            if [ -f "$dir/pnpm-lock.yaml" ]; then
+              (cd "$dir" && npx --yes pnpm@9 audit --prod --audit-level high) || fail=1
+            elif [ -f "$dir/package-lock.json" ]; then
+              (cd "$dir" && npm audit --omit=dev --audit-level=high) || fail=1
+            else
+              echo "No supported lockfile in $dir"
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+  semgrep:
+    name: Static analysis (Semgrep, new findings only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Semgrep
+        run: python3 -m pip install --quiet "semgrep==${SEMGREP_VERSION}"
+      - name: Scan
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          CONFIGS="--config p/typescript --config p/react --config p/secrets"
+          [ -d .semgrep ] && CONFIGS="$CONFIGS --config .semgrep"
+          case "$EVENT" in
+            pull_request) BASE="$PR_BASE" ;;
+            push) BASE="$PUSH_BEFORE" ;;
+            *) BASE="" ;;
+          esac
+          if echo "$BASE" | grep -Eq '^[0-9a-f]{40}$' && [ "$BASE" != "0000000000000000000000000000000000000000" ]; then
+            # PRs and pushes fail only on findings this change introduces.
+            semgrep scan $CONFIGS --baseline-commit "$BASE" --metrics=off --error --severity ERROR
+          else
+            # Weekly / manual full scan: list everything, don't fail on the backlog.
+            semgrep scan $CONFIGS --metrics=off --severity ERROR
+          fi
+
+  test-build:
+    name: Tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install, test, build
+        run: |
+          for dir in $PACKAGES; do
+            echo "::group::$dir"
+            cd "$GITHUB_WORKSPACE/$dir"
+            if [ -f pnpm-lock.yaml ]; then PM="npx --yes pnpm@9"; $PM install --frozen-lockfile
+            elif [ -f package-lock.json ]; then PM="npm"; npm ci
+            else echo "skip $dir"; echo "::endgroup::"; continue; fi
+            has() { node -e "process.exit(require('./package.json').scripts?.['$1'] ? 0 : 1)"; }
+            if has test; then $PM test; fi
+            if has build; then $PM run build; fi
+            echo "::endgroup::"
+          done

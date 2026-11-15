@@ -1,0 +1,9 @@
+# gitleaks config. Extends the default rules; the only allowlisted value is the
+# Supabase publishable key, which is public by design (it ships in the browser
+# and RLS protects the data). Never allowlist a real secret: rotate it.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Supabase publishable keys are public client keys"
+regexes = ['''sb_publishable_[A-Za-z0-9_-]+''']
