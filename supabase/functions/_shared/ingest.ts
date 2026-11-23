@@ -52,6 +52,28 @@ export function merchantKey(merchant: string | null): string | null {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** Captures per account per 24 hours that may call Claude (not counting Gmail sync, which is bounded per run). */
+export function captureLimit(): number {
+  const n = Number(Deno.env.get("DAILY_CAPTURE_LIMIT"));
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 500;
+}
+
+/**
+ * Counts one capture against the account's daily limit; false when the limit is reached. If the quota migration
+ * hasn't been applied yet, captures carry on (logged) rather than breaking every import route.
+ */
+async function takeCaptureQuota(userId: string, source: IngestInput["source"]): Promise<boolean> {
+  if (source === "gmail") return true;
+  const { data, error } = await adminClient().rpc("take_capture_quota", {
+    p_user: userId, p_source: source, p_limit: captureLimit(),
+  });
+  if (error) {
+    console.warn("capture quota unavailable (is migration capture_quota applied?)", error.message);
+    return true;
+  }
+  return data === true;
+}
+
 function lineTotal(li: Extraction["line_items"][number]): number | null {
   if (li.total != null) return li.total;
   if (li.unit_price != null) return round2(li.unit_price * (li.quantity ?? 1));
@@ -97,6 +119,10 @@ export async function ingest(input: IngestInput): Promise<IngestOutcome> {
       .eq("source_message_id", input.messageId)
       .maybeSingle();
     if (existing) return { outcome: "duplicate", receiptId: existing.id, detail: "Already captured" };
+  }
+
+  if (!(await takeCaptureQuota(input.userId, input.source))) {
+    return { outcome: "skipped", detail: `Daily limit of ${captureLimit()} new receipts reached. Try again tomorrow` };
   }
 
   const [{ data: cats }, { data: profile }] = await Promise.all([

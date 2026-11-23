@@ -135,6 +135,80 @@ export function isPublicHost(host: string): boolean {
     && !/(^|\.)(supabase\.co|supabase\.in)$/.test(h);
 }
 
+function ipv4Public(ip: string): boolean {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b, c] = p;
+  return !(
+    a === 0 || a === 10 || a === 127 || a >= 224 || // this network, private, loopback, multicast/reserved
+    (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
+    (a === 169 && b === 254) || // link-local, cloud metadata
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) || // IETF protocol assignments, TEST-NET-1
+    (a === 198 && (b === 18 || b === 19)) || // benchmarking
+    (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113) // TEST-NET-2/3
+  );
+}
+
+/** Expands an IPv6 address to its 8 groups, or null if it isn't one. */
+function ipv6Groups(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/^\[|\]$/g, "").split("%")[0];
+  // Trailing dotted IPv4 (::ffff:1.2.3.4) → two hex groups.
+  const v4 = s.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (v4) {
+    const p = v4[1].split(".").map(Number);
+    if (p.length !== 4 || p.some((n) => n > 255)) return null;
+    s = s.slice(0, -v4[1].length) + ((p[0] << 8) | p[1]).toString(16) + ":" + ((p[2] << 8) | p[3]).toString(16);
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const groups = [...head, ...Array(fill).fill("0"), ...tail].map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
+  return groups.length === 8 && groups.every((g) => !Number.isNaN(g)) ? groups : null;
+}
+
+/** True only for globally routable unicast addresses (IPv4 or IPv6). */
+export function isPublicIp(ip: string): boolean {
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return ipv4Public(ip);
+  const g = ipv6Groups(ip);
+  if (!g) return false;
+  const embedded = () => `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return ipv4Public(embedded()); // ::ffff:a.b.c.d
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return ipv4Public(embedded()); // NAT64
+  if (g.slice(0, 6).every((x) => x === 0)) return false; // ::, ::1, IPv4-compatible
+  if ((g[0] & 0xfe00) === 0xfc00) return false; // unique local fc00::/7
+  if ((g[0] & 0xffc0) === 0xfe80) return false; // link-local fe80::/10
+  if ((g[0] & 0xff00) === 0xff00) return false; // multicast
+  if (g[0] === 0x2001 && g[1] === 0x0db8) return false; // documentation
+  if (g[0] === 0x2002) return false; // 6to4 can tunnel to any IPv4
+  return (g[0] & 0xe000) === 0x2000; // global unicast 2000::/3
+}
+
+type Resolver = (host: string, type: "A" | "AAAA") => Promise<string[]>;
+const denoResolver: Resolver = (host, type) => Deno.resolveDns(host, type);
+
+/** Fails closed (and says why) if this runtime can't look addresses up, instead of skipping the check. */
+function resolverAvailable(resolve: Resolver): boolean {
+  return resolve !== denoResolver || typeof Deno.resolveDns === "function";
+}
+
+/**
+ * Looks the host up and checks every address it resolves to, so a public-looking name that points at a private
+ * network or the cloud metadata address is refused. Throws a user-facing message when it isn't reachable or allowed.
+ */
+export async function assertPublicHost(host: string, resolve: Resolver = denoResolver): Promise<void> {
+  if (!isPublicHost(host)) throw new Error("That address isn't a public website");
+  if (!resolverAvailable(resolve)) throw new Error("Store connections are unavailable right now (address lookup isn't supported here).");
+  const settle = (type: "A" | "AAAA") => resolve(host, type).catch(() => [] as string[]);
+  const ips = [...(await settle("A")), ...(await settle("AAAA"))];
+  if (!ips.length) throw new Error("Couldn't find that store's address. Check it's spelled right.");
+  if (!ips.every(isPublicIp)) throw new Error("That address isn't a public website");
+}
+
 export function wooAuthHeader(key: string, secret: string): string {
   return "Basic " + btoa(`${key}:${secret}`);
 }

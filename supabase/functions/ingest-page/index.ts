@@ -2,7 +2,7 @@
 // Auth: `Authorization: Bearer rc_…` (a connection code created in Settings).
 // Body: { store, url, title?, text } or { ping: true }.
 import { ingest, pageMessageId } from "../_shared/ingest.ts";
-import { corsHeaders, json, userFromApiToken } from "../_shared/utils.ts";
+import { corsHeaders, json, publicError, userFromApiToken } from "../_shared/utils.ts";
 
 const STORES = new Set(["walmart", "target", "amazon", "other"]);
 const MIN_TEXT = 150;
@@ -43,7 +43,6 @@ Deno.serve(async (req) => {
     });
     return json(result);
   } catch (e) {
-    console.error("ingest-page", e);
-    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    return publicError("ingest-page", e);
   }
 });

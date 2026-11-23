@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { finishGmail, withoutGmailParams } from "../lib/gmail";
 import { CameraIcon, CheckIcon } from "../components/Icons";
 import { ExtensionSection } from "../components/SettingsSections";
 
@@ -26,9 +27,25 @@ export default function Welcome({ userId }: { userId: string }) {
         setToken(data?.inbound_token ?? null);
       });
     supabase.from("email_connections").select("email").eq("user_id", userId).then(({ data }) => setGmail((data ?? []).map((c) => c.email)));
-    // Back from Google's consent screen.
-    if (params.get("gmail") === "error") setError(`Gmail connection failed (${params.get("reason") ?? "unknown"}). You can try again or skip.`);
-  }, [userId, params]);
+  }, [userId]);
+
+  // Back from Google's consent screen: finish connecting with this session (see lib/gmail.ts).
+  const finishing = useRef(false);
+  useEffect(() => {
+    const result = params.get("gmail");
+    if (!result) return;
+    setParams(withoutGmailParams(params), { replace: true });
+    if (result !== "finish") {
+      setError(`Gmail connection failed (${params.get("reason") ?? "unknown"}). You can try again or skip.`);
+      return;
+    }
+    if (finishing.current) return; // the Google code works once
+    finishing.current = true;
+    finishGmail(params).then((r) => {
+      if ("error" in r) setError(`${r.error} You can try again or skip.`);
+      else setGmail((g) => (g.includes(r.email) ? g : [...g, r.email]));
+    });
+  }, [params, setParams]);
 
   async function saveBusiness() {
     await supabase.from("profiles").update({ business_description: business.trim() || null }).eq("user_id", userId);

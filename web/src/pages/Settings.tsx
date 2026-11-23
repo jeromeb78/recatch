@@ -1,6 +1,7 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { finishGmail, withoutGmailParams } from "../lib/gmail";
 import { useCategories } from "../lib/useCategories";
 import { date, relative } from "../lib/format";
 import type { Connection } from "../lib/types";
@@ -90,15 +91,27 @@ function OwnerSettings({ userId, email }: { userId: string; email: string }) {
       .then(({ data }) => setToken(data?.inbound_token ?? null));
   }, [loadConnections, userId]);
 
-  // Result of the Google OAuth round-trip.
+  // Result of the Google OAuth round-trip: finish it with this session (see lib/gmail.ts).
+  const finishing = useRef(false);
   useEffect(() => {
     const gmail = params.get("gmail");
     if (!gmail) return;
-    setNotice(gmail === "connected"
-      ? { kind: "ok", text: `Connected ${params.get("email") ?? "Gmail"}. Run a backfill to pull older receipts.` }
-      : { kind: "error", text: `Gmail connection failed (${params.get("reason") ?? "unknown"}).` });
-    setParams({}, { replace: true });
-  }, [params, setParams]);
+    setParams(withoutGmailParams(params), { replace: true });
+    if (gmail !== "finish") {
+      setNotice({ kind: "error", text: `Gmail connection failed (${params.get("reason") ?? "unknown"}).` });
+      return;
+    }
+    if (finishing.current) return; // the Google code works once
+    finishing.current = true;
+    setBusy("connect");
+    finishGmail(params).then(async (r) => {
+      setBusy(null);
+      setNotice("error" in r
+        ? { kind: "error", text: r.error }
+        : { kind: "ok", text: `Connected ${r.email}. Run a backfill to pull older receipts.` });
+      await loadConnections();
+    });
+  }, [params, setParams, loadConnections]);
 
   async function connectGmail() {
     if (!(await confirmIdentity("Receipt Catcher will read receipt emails from the Gmail account you pick."))) return;

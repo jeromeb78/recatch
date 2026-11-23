@@ -1,5 +1,5 @@
-import { assertEquals } from "jsr:@std/assert@1";
-import { isPublicHost, mapOrder, orderFees, productCost, storeBase, validKeys } from "./woo.ts";
+import { assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { assertPublicHost, isPublicHost, isPublicIp, mapOrder, orderFees, productCost, storeBase, validKeys } from "./woo.ts";
 
 Deno.test("maps a paid order with refunds, fees and no customer data", () => {
   const m = mapOrder({
@@ -66,4 +66,28 @@ Deno.test("product cost from WooCommerce or a cost plugin", () => {
   assertEquals(productCost({ meta_data: [{ key: "_alg_wc_cog_cost", value: "2" }] }), 2);
   assertEquals(productCost({ meta_data: [{ key: "_other", value: "9" }] }), null);
   assertEquals(productCost({}), null);
+});
+
+Deno.test("only globally routable addresses count as public", () => {
+  for (const ip of ["93.184.216.34", "8.8.8.8", "2606:4700::6810:84e5", "2a00:1450:4001:82a::200e", "::ffff:8.8.8.8"]) {
+    assertEquals(isPublicIp(ip), true, ip);
+  }
+  for (const ip of [
+    "10.0.0.1", "127.0.0.1", "169.254.169.254", "172.16.5.4", "172.31.255.255", "192.168.1.1", "100.64.0.1", "0.0.0.0",
+    "224.0.0.1", "255.255.255.255", "198.18.0.1", "::1", "::", "fe80::1", "fd00::1", "fc00::abcd", "ff02::1",
+    "::ffff:127.0.0.1", "::ffff:a9fe:a9fe", "64:ff9b::a9fe:a9fe", "2001:db8::1", "2002:c0a8:0101::1", "not-an-ip", "1.2.3",
+  ]) {
+    assertEquals(isPublicIp(ip), false, ip);
+  }
+});
+
+Deno.test("store hosts are checked by the addresses they resolve to", async () => {
+  const dns = (records: Record<string, string[]>) => (_host: string, type: "A" | "AAAA") =>
+    Promise.resolve(records[type] ?? []);
+  await assertPublicHost("shop.example.com", dns({ A: ["93.184.216.34"] }));
+  await assertRejects(() => assertPublicHost("evil.example.com", dns({ A: ["169.254.169.254"] })), Error, "public website");
+  // Any private address among the records is enough to refuse it.
+  await assertRejects(() => assertPublicHost("mixed.example.com", dns({ A: ["93.184.216.34"], AAAA: ["::1"] })), Error, "public website");
+  await assertRejects(() => assertPublicHost("missing.example.com", dns({})), Error, "Couldn't find");
+  await assertRejects(() => assertPublicHost("localhost", dns({ A: ["93.184.216.34"] })), Error, "public website");
 });

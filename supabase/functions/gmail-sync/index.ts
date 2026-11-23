@@ -3,7 +3,7 @@
 //   Web app:  POST with user JWT, body { backfill_days?: number } → the caller's connections
 import { buildQuery, getMessage, GmailAuthError, listMessageIds, refreshAccessToken } from "../_shared/gmail.ts";
 import { ingest } from "../_shared/ingest.ts";
-import { adminClient, corsHeaders, env, json, timingSafeEqual, userFromRequest } from "../_shared/utils.ts";
+import { adminClient, corsHeaders, env, json, publicError, timingSafeEqual, userFromRequest } from "../_shared/utils.ts";
 
 const MAX_PER_RUN = Number(Deno.env.get("SYNC_MAX_PER_RUN") ?? 20);
 const CONCURRENCY = 4;
@@ -169,7 +169,6 @@ Deno.serve(async (req) => {
     }
     return json({ connections: results });
   } catch (e) {
-    console.error("gmail-sync", e);
-    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    return publicError("gmail-sync", e);
   }
 });
