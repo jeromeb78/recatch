@@ -84,7 +84,9 @@ is rate-limited to a few emails an hour.
 1. Create a Postmark server, then open its **Inbound** stream to get an address like `abc123@inbound.postmarkapp.com`.
    (Optional: point a custom domain's MX at Postmark so you can use `receipts@yourdomain.com`.)
 2. Set the inbound webhook URL to
-   `https://<project-ref>.supabase.co/functions/v1/inbound-email?secret=<INBOUND_SECRET>`
+   `https://postmark:<INBOUND_SECRET>@<project-ref>.supabase.co/functions/v1/inbound-email`
+   (HTTP Basic auth, so the secret stays out of access logs). The older `?secret=<INBOUND_SECRET>` form still works;
+   once the webhook uses Basic auth, set `INBOUND_ALLOW_QUERY_SECRET=false` on the functions to turn it off.
 3. Users forward to `abc123+<their token>@inbound.postmarkapp.com`. The Settings page shows each user their own address.
 
 ### 4. Edge function secrets + deploy
@@ -105,6 +107,15 @@ supabase functions deploy mcp --no-verify-jwt
 ```
 
 (`supabase functions deploy` with no name deploys all of them using the settings in `supabase/config.toml`.)
+
+Gmail's OAuth callback doesn't save the connection itself: it sends the code back to the app, which finishes it with
+the signed-in user's session (`action: "finish"`), so a consent link started from another account can't attach your
+inbox to it.
+
+New receipt captures that call Claude (forwarding address, extension, phone Shortcut, uploads, Claude connector; not
+Gmail sync) are capped per account per 24 hours by `DAILY_CAPTURE_LIMIT` (default 500; migration `capture_quota`).
+WooCommerce store addresses are checked by the IP addresses they resolve to, on every redirect, so they can't point
+at private networks. Unexpected errors are logged and answered with a generic message.
 
 The `--no-verify-jwt` functions are called by Google, Postmark, pg_cron, the extension or Claude. They verify callers themselves
 with an HMAC-signed OAuth state, a shared secret, a hashed connection code / OAuth token, or the user's JWT checked in code.

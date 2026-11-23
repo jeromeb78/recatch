@@ -8,7 +8,7 @@
 //   { action: "rekey", channel, key, secret }                       → { ok }
 // Disconnecting is a plain delete of the sales_channels row from the app (its Vault secret goes with it).
 import { accountFor, adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
-import { isPublicHost, mapOrder, productCost, storeBase, validKeys, wooAuthHeader, type WooOrder } from "../_shared/woo.ts";
+import { assertPublicHost, isPublicHost, mapOrder, productCost, storeBase, validKeys, wooAuthHeader, type WooOrder } from "../_shared/woo.ts";
 
 const PER_PAGE = 100;
 const PAGES_PER_CALL = 8;
@@ -20,6 +20,12 @@ async function wooGet(base: string, path: string, key: string, secret: string, p
   let url = new URL(`${base}/wp-json/wc/v3/${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   for (let hop = 0; hop < 4; hop++) {
+    // Checked on every hop: the resolved addresses must be public, not just the name.
+    try {
+      await assertPublicHost(url.hostname);
+    } catch (e) {
+      throw new StoreError((e as Error).message);
+    }
     let res: Response;
     try {
       res = await fetch(url, {

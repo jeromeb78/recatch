@@ -1,8 +1,10 @@
-// Postmark inbound webhook: https://<ref>.supabase.co/functions/v1/inbound-email?secret=<INBOUND_SECRET>
+// Postmark inbound webhook: https://postmark:<INBOUND_SECRET>@<ref>.supabase.co/functions/v1/inbound-email
+// (HTTP Basic auth, so the secret isn't written to access logs). The older ?secret=<INBOUND_SECRET> form still works
+// while the webhook URL is being switched over; set INBOUND_ALLOW_QUERY_SECRET=false once it has been.
 // Users forward to <inbound address>+<their token>@…; Postmark puts the token in MailboxHash.
 // To use another provider (SendGrid, Mailgun, Cloudflare Email Workers), adapt `parsePayload`.
 import { ingest, RawFile } from "../_shared/ingest.ts";
-import { adminClient, base64ToBytes, corsHeaders, env, json, timingSafeEqual } from "../_shared/utils.ts";
+import { adminClient, base64ToBytes, corsHeaders, env, json, publicMessage, timingSafeEqual } from "../_shared/utils.ts";
 
 interface PostmarkAttachment {
   Name: string;
@@ -36,6 +38,20 @@ function tokenFrom(p: PostmarkInbound): string | null {
   return m ? m[1].toLowerCase() : null;
 }
 
+/** The webhook secret from HTTP Basic auth (any user name), else from the legacy ?secret= parameter. */
+export function webhookSecret(req: Request, allowQuery: boolean): string {
+  const basic = req.headers.get("authorization")?.match(/^Basic\s+([A-Za-z0-9+/=]+)$/i);
+  if (basic) {
+    try {
+      const decoded = atob(basic[1]);
+      return decoded.slice(decoded.indexOf(":") + 1);
+    } catch {
+      return "";
+    }
+  }
+  return allowQuery ? new URL(req.url).searchParams.get("secret") ?? "" : "";
+}
+
 function parsePayload(p: PostmarkInbound) {
   const pdfs: RawFile[] = [];
   const images: RawFile[] = [];
@@ -59,8 +75,8 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  const secret = new URL(req.url).searchParams.get("secret") ?? "";
-  if (!timingSafeEqual(secret, env("INBOUND_SECRET"))) return json({ error: "Unauthorized" }, 401);
+  const allowQuery = Deno.env.get("INBOUND_ALLOW_QUERY_SECRET") !== "false";
+  if (!timingSafeEqual(webhookSecret(req, allowQuery), env("INBOUND_SECRET"))) return json({ error: "Unauthorized" }, 401);
 
   // From here on always answer 200 so Postmark doesn't retry emails we've deliberately dropped.
   try {
@@ -91,8 +107,7 @@ Deno.serve(async (req) => {
     });
     return json({ ok: true, ...result });
   } catch (e) {
-    console.error("inbound-email", e);
     // 500 lets Postmark retry transient failures (e.g. Claude or storage hiccups).
-    return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+    return json({ ok: false, error: publicMessage("inbound-email", e) }, 500);
   }
 });

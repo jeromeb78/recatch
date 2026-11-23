@@ -1,5 +1,5 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
-import { env } from "./utils.ts";
+import { env, UserError } from "./utils.ts";
 import { TAX_GUIDANCE, TAX_LINE_CODES, USE_TYPES } from "./tax.ts";
 
 export interface ItemToCategorize {
@@ -71,10 +71,10 @@ export async function categorizeItems(
     }],
   });
 
-  if (response.stop_reason === "refusal") throw new Error("Categorization was declined by the model.");
-  if (response.stop_reason === "max_tokens") throw new Error("Categorization output was cut off.");
+  if (response.stop_reason === "refusal") throw new UserError("Categorization was declined by the model.");
+  if (response.stop_reason === "max_tokens") throw new UserError("Categorization output was cut off. Try fewer items at once.");
   const block = response.content.find((b) => b.type === "text");
-  if (!block || block.type !== "text") throw new Error("Categorization returned no output.");
+  if (!block || block.type !== "text") throw new UserError("Categorization returned no output. Try again.");
   const ids = new Set(items.map((i) => i.id));
   return (JSON.parse(block.text).items as ItemCategory[]).filter((c) => ids.has(c.id));
 }

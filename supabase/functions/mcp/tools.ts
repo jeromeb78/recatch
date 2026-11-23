@@ -1,7 +1,7 @@
 // Tools exposed to Claude. Every query is scoped to the authenticated user's id.
 import { ingest, pageMessageId } from "../_shared/ingest.ts";
 import { TAX_LINE_CODES, TAX_LINES, USE_TYPES } from "../_shared/tax.ts";
-import { adminClient, allows, sha256Hex } from "../_shared/utils.ts";
+import { adminClient, allows, publicMessage, sha256Hex } from "../_shared/utils.ts";
 import { appUrl, type Grant } from "./oauth.ts";
 import { getOrder, inventoryOnHand, ProfitError, productProfit, profitSummary, setSkuCost, shippingCosts, stripeCheck } from "./profit.ts";
 
@@ -473,8 +473,7 @@ export async function callTool(name: string, grant: Grant, args: Args) {
     };
   } catch (e) {
     const known = e instanceof ToolError || e instanceof ProfitError;
-    const msg = known ? (e as Error).message : `Receipt Catcher error: ${e instanceof Error ? e.message : String(e)}`;
-    if (!known) console.error("mcp tool", name, e);
+    const msg = known ? (e as Error).message : `Receipt Catcher error: ${publicMessage(`mcp tool ${name}`, e)}`;
     return { content: [{ type: "text", text: msg }], isError: true };
   }
 }

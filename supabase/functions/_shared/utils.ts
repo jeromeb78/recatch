@@ -13,6 +13,23 @@ export function json(body: unknown, status = 200): Response {
   });
 }
 
+/** An error whose message is written for the user and safe to send back. Anything else is logged, not returned. */
+export class UserError extends Error {}
+
+export const GENERIC_ERROR = "Something went wrong on our side. Try again in a minute.";
+
+/** The message to show for `e`: its own for a UserError, otherwise a generic one (details go to the function log). */
+export function publicMessage(where: string, e: unknown): string {
+  if (e instanceof UserError) return e.message;
+  console.error(where, e);
+  return GENERIC_ERROR;
+}
+
+/** JSON error response for an unexpected failure, without internal details. */
+export function publicError(where: string, e: unknown, status = 500): Response {
+  return json({ error: publicMessage(where, e) }, status);
+}
+
 export function env(name: string, fallback?: string): string {
   const v = Deno.env.get(name) ?? fallback;
   if (v === undefined || v === "") throw new Error(`Missing env var ${name}`);

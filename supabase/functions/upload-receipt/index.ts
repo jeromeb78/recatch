@@ -3,7 +3,7 @@
 // Body: the raw file (JPEG, PNG, WebP or PDF), or multipart/form-data with a "file" field.
 // Replies in plain text so the Shortcut can show it as a notification.
 import { ingest } from "../_shared/ingest.ts";
-import { adminClient, corsHeaders, userFromApiToken } from "../_shared/utils.ts";
+import { adminClient, corsHeaders, publicMessage, userFromApiToken } from "../_shared/utils.ts";
 
 const MAX_IMAGE = 5 * 1024 * 1024; // what Claude accepts per image
 const MAX_PDF = 25 * 1024 * 1024;
@@ -76,7 +76,6 @@ Deno.serve(async (req) => {
     if (result.outcome === "duplicate") return text(`Already in Receipt Catcher${what ? `: ${what}` : ""}.`);
     return text(`Added to Receipt Catcher${what ? `: ${what}` : ""}${r?.status === "needs_review" ? " — needs a quick review" : ""}.`);
   } catch (e) {
-    console.error("upload-receipt", e);
-    return text(`Receipt Catcher hit an error: ${e instanceof Error ? e.message : String(e)}`, 500);
+    return text(`Receipt Catcher hit an error: ${publicMessage("upload-receipt", e)}`, 500);
   }
 });

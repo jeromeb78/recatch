@@ -7,7 +7,7 @@
 // Each item is categorized with the description of the business it belongs to (its own, else its receipt's),
 // falling back to the account's general business description.
 import { categorizeItems } from "../_shared/categorize.ts";
-import { accountFor, adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
+import { accountFor, adminClient, corsHeaders, json, publicError, userFromRequest } from "../_shared/utils.ts";
 
 const BATCH = 50;
 const ENTITY: Record<string, string> = {
@@ -94,6 +94,6 @@ Deno.serve(async (req) => {
     return json({ categorized, remaining: count ?? 0 });
   } catch (e) {
     console.error("categorize-items", e);
-    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    return publicError("categorize-items", e);
   }
 });

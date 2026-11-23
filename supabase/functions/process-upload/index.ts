@@ -1,7 +1,7 @@
 // Called by the web app after it uploads a photo/PDF to storage at {user_id}/uploads/...
 // Body: { path: string, account?: owner id when uploading to an account the caller was invited to }
 import { ingest } from "../_shared/ingest.ts";
-import { accountFor, adminClient, corsHeaders, json, userFromRequest } from "../_shared/utils.ts";
+import { accountFor, adminClient, corsHeaders, json, publicError, userFromRequest } from "../_shared/utils.ts";
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
@@ -46,7 +46,6 @@ Deno.serve(async (req) => {
     });
     return json(result);
   } catch (e) {
-    console.error("process-upload", e);
-    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    return publicError("process-upload", e);
   }
 });

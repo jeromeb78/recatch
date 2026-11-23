@@ -10,6 +10,7 @@ import {
   type Grant, userFromAccessToken,
 } from "./oauth.ts";
 import { callTool, toolsFor } from "./tools.ts";
+import { publicMessage } from "../_shared/utils.ts";
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -121,8 +122,7 @@ export async function handler(req: Request): Promise<Response> {
   try {
     return withCors(await route(req));
   } catch (e) {
-    console.error("mcp", e);
-    return withCors(Response.json({ error: "server_error", error_description: e instanceof Error ? e.message : String(e) }, { status: 500 }));
+    return withCors(Response.json({ error: "server_error", error_description: publicMessage("mcp", e) }, { status: 500 }));
   }
 }
 

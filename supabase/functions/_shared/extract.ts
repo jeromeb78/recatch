@@ -1,5 +1,5 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
-import { bytesToBase64, env } from "./utils.ts";
+import { bytesToBase64, env, UserError } from "./utils.ts";
 import { TAX_GUIDANCE, TAX_LINE_CODES, USE_TYPES } from "./tax.ts";
 
 export type DocumentType =
@@ -155,7 +155,7 @@ export async function extractReceipt(input: ExtractInput): Promise<{ data: Extra
   }
   for (const img of input.images ?? []) {
     if (!IMAGE_TYPES.has(img.mime)) {
-      throw new Error(`Unsupported image type ${img.mime}. Use JPEG, PNG, WebP or GIF (iPhone: Settings › Camera › Formats › Most Compatible).`);
+      throw new UserError(`Unsupported image type ${img.mime}. Use JPEG, PNG, WebP or GIF (iPhone: Settings › Camera › Formats › Most Compatible).`);
     }
     content.push({
       type: "image",
@@ -198,11 +198,11 @@ export async function extractReceipt(input: ExtractInput): Promise<{ data: Extra
     messages: [{ role: "user", content }],
   });
 
-  if (response.stop_reason === "refusal") throw new Error("Extraction was declined by the model.");
-  if (response.stop_reason === "max_tokens") throw new Error("Extraction output was cut off (max_tokens).");
+  if (response.stop_reason === "refusal") throw new UserError("Extraction was declined by the model.");
+  if (response.stop_reason === "max_tokens") throw new UserError("That document was too long to read in one go.");
 
   const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") throw new Error("Extraction returned no output.");
+  if (!textBlock || textBlock.type !== "text") throw new UserError("The receipt reader returned nothing. Try again.");
   const data = JSON.parse(textBlock.text) as Extraction;
   return { data, truncated };
 }
